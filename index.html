@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#0f172a" />
+  <title>Audio Transcription</title>
+  <link rel="manifest" href="manifest.webmanifest" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" />
+  <link rel="stylesheet" href="styles.css" />
+  
+
+
+</head>
+
+<body class="min-h-screen text-slate-100">
+  
+    <div class="mx-auto flex min-h-screen w-full max-w-5xl flex-col items-center justify-center px-3 py-4 sm:px-6 sm:py-8 lg:px-8 lg:py-10">
+    
+        <div class="w-full rounded-3xl border border-slate-800 bg-slate-900/90 p-4 shadow-2xl shadow-slate-950/30 backdrop-blur sm:p-6 lg:p-8">
+            
+            <div class="mb-6 space-y-4 text-center sm:mb-8">
+                <p class="inline-flex items-center rounded-full bg-slate-800 px-4 py-2 text-[0.7rem] uppercase tracking-[0.3em] text-sky-300/90 sm:text-xs">Audio Transcriber</p>
+                <h1 class="text-2xl font-semibold sm:text-3xl lg:text-4xl"><i class="fa-xs fa-solid fa-microphone"></i> Audio <i class="fa-solid fa-arrow-right-long"></i> <i class="fa-xs fa-regular fa-file-lines"></i>  Text</h1>
+                <p class="mx-auto max-w-2xl text-sm text-slate-400 sm:text-base lg:text-lg">Upload an audio file and transcribe it to text directly in your local browser. </p>
+            </div>
+
+            <div class="mt-2 flex justify-center sm:justify-end">
+                <button id="customizeToggle" type="button" class="inline-flex w-full items-center justify-center gap-2 rounded-full border border-slate-700 bg-slate-900/80 px-4 py-2 text-sm font-medium text-slate-200 transition hover:border-slate-500 hover:text-slate-100 sm:w-auto">
+                    <i class="fa-solid fa-sliders"></i>
+                    Customize
+                </button>
+            </div>
+
+            <div id="customizePanel" class="mt-4 hidden rounded-3xl border border-slate-800 bg-slate-950/80 p-4 shadow-inner shadow-slate-950/20 sm:p-5">
+                <div class="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                        <h3 class="text-sm font-semibold text-slate-100">Personalize your experience</h3>
+                        <p class="mt-1 text-sm text-slate-400">Choose a theme, adjust the font size, and switch the font family.</p>
+                    </div>
+                </div>
+
+                <div class="mt-4 grid gap-4 md:grid-cols-3">
+                    <div>
+                        <p class="text-sm font-medium text-slate-300">Theme</p>
+                        <div class="mt-2 grid grid-cols-5 gap-2">
+                            <button type="button" class="theme-option flex items-center justify-center rounded-full border border-slate-700 p-0 transition" data-theme="blue" aria-label="Blue theme">
+                                <span class="m-1 h-8 w-8 rounded-full border-2 border-white/90" style="background-color: #38bdf8;"></span>
+                            </button>
+                            <button type="button" class="theme-option flex items-center justify-center rounded-full border border-slate-700 p-0 transition" data-theme="pink" aria-label="Pink theme">
+                                <span class="m-1 h-8 w-8 rounded-full border-2 border-white/90" style="background-color: #c55a8e;"></span>
+                            </button>
+                            <button type="button" class="theme-option flex items-center justify-center rounded-full border border-slate-700 p-0 transition" data-theme="yellow" aria-label="Yellow theme">
+                                <span class="m-1 h-8 w-8 rounded-full border-2 border-white/90" style="background-color: #fbbf24;"></span>
+                            </button>
+                            <button type="button" class="theme-option flex items-center justify-center rounded-full border border-slate-700 p-0 transition" data-theme="green" aria-label="Green theme">
+                                <span class="m-1 h-8 w-8 rounded-full border-2 border-white/90" style="background-color: #4ade80;"></span>
+                            </button>
+                            <button type="button" class="theme-option flex items-center justify-center rounded-full border border-slate-700 p-0 transition" data-theme="black" aria-label="Black theme">
+                                <span class="m-1 h-8 w-8 rounded-full border-2 border-white/90" style="background-color: #111827;"></span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div>
+                        <p class="text-sm font-medium text-slate-300">Font size</p>
+                        <div class="mt-2 flex flex-wrap gap-2">
+                            <button type="button" class="font-size-option rounded-full border border-slate-700 px-3 py-2 text-sm text-slate-200 transition" data-size="small">Small</button>
+                            <button type="button" class="font-size-option rounded-full border border-slate-700 px-3 py-2 text-sm text-slate-200 transition" data-size="medium">Medium</button>
+                            <button type="button" class="font-size-option rounded-full border border-slate-700 px-3 py-2 text-sm text-slate-200 transition" data-size="large">Large</button>
+                        </div>
+                    </div>
+
+                    <div>
+                        <p class="text-sm font-medium text-slate-300">Font family</p>
+                        <select id="fontFamilySelect" class="mt-2 w-full rounded-2xl border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 outline-none">
+                            <option value="Inter">Inter</option>
+                            <option value="Poppins">Poppins</option>
+                            <option value="Roboto">Roboto</option>
+                            <option value="Georgia">Georgia</option>
+                            <option value="Segoe UI">Segoe UI</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <div class="mt-6 flex flex-col gap-4 sm:grid sm:grid-cols-[1fr_auto] sm:items-start">
+                <label class="flex w-full max-w-2xl flex-col gap-3 rounded-3xl border border-slate-800 bg-slate-950/80 p-4 shadow-inner shadow-slate-950/20 sm:p-5">
+                    <span class="text-sm font-medium text-slate-300"><i class="fa-lg fa-solid fa-file-arrow-down"></i> Upload an audio file</span>
+                    <input id="audioInput" type="file" accept="audio/*" class="w-full text-sm text-slate-200 file:mr-3 file:rounded-full file:border-0 file:bg-slate-800 file:px-4 file:py-2 file:text-slate-100 file:shadow-sm file:shadow-slate-950/10" />
+                    <p class="text-xs leading-5 text-slate-500">Supports audio file formats such as WAV, MP3, OGG, M4A and more.</p>
+                </label>
+
+                <button id="transcribeBtn" class="flex min-h-[3rem] w-full items-center justify-center rounded-3xl bg-sky-500 px-5 text-sm font-medium text-slate-950 transition hover:bg-sky-400 disabled:cursor-not-allowed disabled:bg-slate-700 sm:w-auto sm:self-center sm:md:h-16" disabled>Transcribe</button>
+            </div>
+
+        <div id="status" class="mt-6 rounded-3xl border border-slate-800 bg-slate-950/80 p-3 text-sm text-slate-300 sm:p-4"></div>
+        <div id="debugInfo" class="mt-2 rounded-3xl border border-slate-800 bg-slate-950/80 p-3 text-xs text-slate-400"></div>
+        <div id="progressContainer" class="mt-4 hidden rounded-3xl bg-slate-950/80 p-3 sm:p-4">
+            <div class="flex items-center justify-between gap-4 text-sm text-slate-200">
+                <div class="inline-flex items-center gap-3">
+                    <span id="progressDot" class="inline-block h-2.5 w-2.5 rounded-full bg-sky-400 animate-pulse"></span>
+                    <span id="progressLabel">Waiting to start...</span>
+                </div>
+                <span id="progressState" class="text-slate-500">Preparing</span>
+            </div>
+            <div class="mt-4 h-2 overflow-hidden rounded-full bg-slate-800">
+                <div id="progressBar" class="h-full w-0 bg-sky-500 transition-all duration-500"></div>
+            </div>
+        </div>
+
+        <div class="mt-6 rounded-3xl border border-slate-800 bg-slate-950/80 p-4 sm:p-6">
+
+            <div class="mb-4 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+
+                <div>
+                    <h2 class="text-lg font-semibold text-slate-100">Transcript</h2>
+                    <p class="text-sm text-slate-500">Your transcription will appear here after processing.</p>
+                </div>
+
+                <div class="flex flex-col items-stretch gap-2 sm:flex-row sm:items-center sm:justify-center sm:gap-3">
+                    <button id="downloadBtn" class="w-full font-medium not-italic rounded-full border border-slate-700 bg-slate-900 px-4 py-2 text-sm text-slate-300 transition sm:w-auto 
+                        [&:not(:disabled)]:hover:border-slate-500 
+                        [&:not(:disabled)]:hover:text-slate-100 
+                        [&:not(:disabled)]:hover:italic 
+                        [&:not(:disabled)]:hover:text-lg 
+                        [&:not(:disabled)]:hover:font-bold 
+                        disabled:cursor-not-allowed disabled:opacity-50" 
+                        disabled><i class="fa-lg fa-solid fa-file-arrow-down"></i> Download</button>
+                    <button id="clearBtn" class="w-full not-italic font-medium rounded-full border border-slate-700 bg-slate-900 px-4 py-2 text-sm text-slate-300 transition hover:border-slate-500 hover:text-slate-100 hover:text-lg hover:font-bold hover:italic sm:w-auto"><i class=" fa-solid fa-trash"></i> Clear</button>
+                </div>
+            </div>
+        
+            <audio id="audioPlayer" controls class="mt-4 hidden w-full rounded-3xl bg-slate-900/90 p-2 text-slate-100 sm:p-3"></audio>
+            <pre id="transcript" class="min-h-[180px] whitespace-pre-wrap break-words rounded-3xl bg-slate-950/90 p-3 text-sm leading-6 text-slate-100 sm:p-4"></pre>
+        </div>
+    </div>
+
+    <div class="mt-6 w-full max-w-3xl rounded-3xl border border-slate-800 bg-slate-900/90 px-4 py-4 text-sm text-slate-400 shadow-xl shadow-slate-950/20 sm:mt-8 sm:px-6 sm:py-5 sm:text-base">
+      <p class="text-slate-300">No server required. Models and computation run in the browser.</p>
+      <p class="mt-3">If the model is not loaded yet, the first transcription may take a minute while the Whisper Tiny model downloads and initializes.</p>
+    </div>
+  </div>
+
+  <div id="errorModal" class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-950/80 px-3 py-4 sm:px-4 sm:py-6">
+    <div class="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-3xl border border-slate-800 bg-slate-900 p-4 shadow-2xl shadow-slate-950/50 sm:p-6">
+      <div class="flex items-start justify-between gap-4">
+        <div>
+          <h2 class="text-xl font-semibold text-slate-100">Transcription Error</h2>
+          <p class="mt-2 text-sm text-slate-400">An issue occurred while preparing or transcribing your audio.</p>
+        </div>
+        <button id="closeErrorModal" class="rounded-full border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-200 hover:bg-slate-700">Close</button>
+      </div>
+      <div class="mt-5 rounded-2xl bg-slate-950/90 p-4 text-sm text-slate-200">
+        <pre id="errorMessage" class="whitespace-pre-wrap break-words text-sm leading-6"></pre>
+      </div>
+      <div class="mt-5 flex justify-end gap-3">
+        <button id="retryErrorBtn" class="rounded-3xl bg-sky-500 px-4 py-2 text-sm font-medium text-slate-950 transition hover:bg-sky-400">Retry</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="script.js"></script>
+  <script>
+    // -----------------------------------------------------------------------------
+    // Offline support registration
+    // This small block asks the browser to register the service worker so the
+    // app can reuse cached files when the site is opened again later.
+    // -----------------------------------------------------------------------------
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./sw.js').catch(() => {});
+      });
+    }
+  </script>
+</body>
+</html>
