@@ -1,4 +1,4 @@
-import { pipeline } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.2.0';
+import { pipeline, AutoModelForCTC, AutoProcessor, AutoTokenizer } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.2.0';
 
 // -----------------------------------------------------------------------------
 // Import note
@@ -28,6 +28,14 @@ const progressContainer = document.getElementById('progressContainer');
 const progressLabel = document.getElementById('progressLabel');
 const progressState = document.getElementById('progressState');
 const progressBar = document.getElementById('progressBar');
+const modelSelect = document.getElementById('modelSelect');
+const modelStatus = document.getElementById('modelStatus');
+const modelDownloadDebug = document.getElementById('modelDownloadDebug');
+const modelDownloadName = document.getElementById('modelDownloadName');
+const modelDownloadedSize = document.getElementById('modelDownloadedSize');
+const modelRemainingSize = document.getElementById('modelRemainingSize');
+const modelDownloadBar = document.getElementById('modelDownloadBar');
+const modelDownloadState = document.getElementById('modelDownloadState');
 
 // -----------------------------------------------------------------------------
 // DOM references and live app state
@@ -47,6 +55,13 @@ let preloadPipelinePromise = null;
 let transcriptionStartTime = null;
 let lastTranscriptionElapsed = null;
 let lastAudioDuration = null;
+let loadedModelId = null;
+let pipelineLoadToken = 0;
+let highlightProcessor = null;
+let highlightModel = null;
+let highlightTokenizer = null;
+let highlightLoadPromise = null;
+const modelDownloadFiles = new Map();
 
 // -----------------------------------------------------------------------------
 // Personalization and theme settings
@@ -62,6 +77,22 @@ let lastAudioDuration = null;
 // locally on the device.
 // -----------------------------------------------------------------------------
 const STORAGE_KEY = 'transcriber-personalization';
+const MODEL_STORAGE_KEY = 'transcriber-model-selection';
+const DEFAULT_MODEL_ID = 'default';
+const HIGHLIGHT_MODEL_ID = 'onnx-community/mms-300m-1130-forced-aligner-ONNX';
+const USE_CTC_HIGHLIGHT_ALIGNMENT = true;
+const MODEL_PROFILES = {
+  default: { label: 'Whisper Base', model: 'Xenova/whisper-base', downloadSize: 'about 75 MB' },
+  medium: { label: 'Whisper Small', model: 'Xenova/whisper-small', downloadSize: 'about 150 MB' },
+  highLite: { label: 'Whisper Large V3 Turbo (q4)', model: 'onnx-community/whisper-large-v3-turbo', dtype: 'q4', downloadSize: 'about 800 MB' },
+  high: { label: 'Whisper Large V3 (q4)', model: 'onnx-community/whisper-large-v3-ONNX', dtype: 'q4', downloadSize: 'about 1.5 GB' },
+};
+const HIGHLIGHT_MODEL_PROFILE = {
+  label: 'MMS CTC forced aligner (q8)',
+  model: HIGHLIGHT_MODEL_ID,
+  dtype: 'q8',
+  downloadSize: 'about 340 MB',
+};
 const DEFAULT_PREFERENCES = { theme: 'blue', fontSize: 'medium', fontFamily: 'Inter' };
 const THEME_PRESETS = {
   blue: {
@@ -312,15 +343,13 @@ const updateDebugInfo = () => {
   debugInfo.textContent = `Transcribe elapsed: ${elapsedText} · Audio duration: ${audioText}`;
 };
 
-// Shifts the highlight earlier/later relative to audio.currentTime.
-// Positive ms = highlighter lags behind (slower); negative ms = highlighter
-// leads ahead (faster). Mutable so the debug slider (added near the bottom
-// of this file) can adjust it live.
-let highlightSyncOffsetMs = -300;
+let highlightSyncOffsetMs = 0;
 
 const LARGE_FILE_STREAM_THRESHOLD = 90 * 1024 * 1024;
 const ASR_CHUNK_SECONDS = 30;
 const ASR_CHUNK_SIZE = 16000 * ASR_CHUNK_SECONDS;
+const ASR_OVERLAP_SECONDS = 2;
+const ASR_OVERLAP_SAMPLES = 16000 * ASR_OVERLAP_SECONDS;
 const STREAM_WORKLET_BATCH_SIZE = 65536;
 const STREAM_RESAMPLE_SECONDS = 8;
 let streamProcessorUrl = null;
@@ -330,6 +359,40 @@ const enableDownload = (text) => {
   downloadBtn.disabled = !text;
 };
 
+const rescaleWordTimingsToPlayback = (wordTimings, decodedDurationSeconds, playbackDurationSeconds) => {
+  if (!Number.isFinite(decodedDurationSeconds) || decodedDurationSeconds <= 0
+    || !Number.isFinite(playbackDurationSeconds) || playbackDurationSeconds <= 0) {
+    console.debug('[transcriber] playback drift correction unavailable', {
+      decodedDurationSeconds,
+      audioPlayerDuration: playbackDurationSeconds,
+    });
+    return wordTimings || [];
+  }
+  const driftRatio = playbackDurationSeconds / decodedDurationSeconds;
+  console.debug('[transcriber] playback drift correction', {
+    decodedDurationSeconds,
+    audioPlayerDuration: playbackDurationSeconds,
+    driftRatio,
+  });
+  if (!Array.isArray(wordTimings) || !wordTimings.length) return [];
+  return wordTimings.map((timing) => ({
+    ...timing,
+    startTimeMs: Math.round(timing.startTimeMs * driftRatio),
+    endTimeMs: Math.round(timing.endTimeMs * driftRatio),
+    startTime: (timing.startTimeMs * driftRatio) / 1000,
+    endTime: (timing.endTimeMs * driftRatio) / 1000,
+  }));
+};
+
+const waitForAudioMetadata = () => {
+  if (Number.isFinite(audioPlayer.duration) && audioPlayer.readyState >= 1) {
+    return Promise.resolve(audioPlayer.duration);
+  }
+  return new Promise((resolve) => {
+    audioPlayer.addEventListener('loadedmetadata', () => resolve(audioPlayer.duration), { once: true });
+  });
+};
+
 const appendFloat32 = (left, right) => {
   if (!left.length) return right;
   if (!right.length) return left;
@@ -337,6 +400,141 @@ const appendFloat32 = (left, right) => {
   result.set(left, 0);
   result.set(right, left.length);
   return result;
+};
+
+const getSelectedModelId = () => {
+  try {
+    const storedModelId = localStorage.getItem(MODEL_STORAGE_KEY);
+    return MODEL_PROFILES[storedModelId] ? storedModelId : DEFAULT_MODEL_ID;
+  } catch (error) {
+    return DEFAULT_MODEL_ID;
+  }
+};
+
+const getModelProfile = (modelId = getSelectedModelId()) => modelId === HIGHLIGHT_MODEL_ID
+  ? HIGHLIGHT_MODEL_PROFILE
+  : MODEL_PROFILES[modelId] || MODEL_PROFILES[DEFAULT_MODEL_ID];
+
+const formatMegabytes = (bytes) => Number.isFinite(bytes) ? `${(bytes / (1024 * 1024)).toFixed(1)} MB` : 'Unknown';
+
+const resetModelDownloadDebug = (modelId) => {
+  modelDownloadFiles.clear();
+  const profile = getModelProfile(modelId);
+  modelDownloadName.textContent = profile.label;
+  modelDownloadedSize.textContent = '0 MB';
+  modelRemainingSize.textContent = 'Unknown';
+  modelDownloadBar.style.width = '0%';
+  modelDownloadState.textContent = 'Waiting for download progress...';
+};
+
+const updateModelDownloadDebug = (progress, modelId) => {
+  if (!progress || !modelDownloadDebug) return;
+  const fileName = progress.file || 'model files';
+  const fileState = modelDownloadFiles.get(fileName) || { loaded: 0, total: null };
+  if (Number.isFinite(progress.loaded)) fileState.loaded = progress.loaded;
+  if (Number.isFinite(progress.total)) fileState.total = progress.total;
+  if (progress.status === 'done' && fileState.total != null) fileState.loaded = fileState.total;
+  modelDownloadFiles.set(fileName, fileState);
+
+  const totals = [...modelDownloadFiles.values()];
+  const downloaded = totals.reduce((sum, file) => sum + (file.loaded || 0), 0);
+  const total = totals.some((file) => file.total == null) ? null : totals.reduce((sum, file) => sum + file.total, 0);
+  const percentage = total ? Math.min(100, (downloaded / total) * 100) : Number.isFinite(progress.progress) ? progress.progress : 0;
+  modelDownloadName.textContent = getModelProfile(modelId).label;
+  modelDownloadedSize.textContent = formatMegabytes(downloaded);
+  modelRemainingSize.textContent = total == null ? 'Unknown' : formatMegabytes(Math.max(0, total - downloaded));
+  modelDownloadBar.style.width = `${percentage}%`;
+  modelDownloadState.textContent = progress.status === 'done'
+    ? `Downloaded ${formatMegabytes(downloaded)}. Checking remaining model files...`
+    : `Downloading ${fileName} (${Math.round(percentage)}%)`;
+};
+
+const confirmModelLazyLoad = (modelId) => {
+  const profile = getModelProfile(modelId);
+  const confirmationKey = `transcriber-model-confirmed-${modelId}`;
+  try {
+    if (sessionStorage.getItem(confirmationKey) === 'true') return true;
+  } catch (error) {
+    // Continue with the confirmation if browser storage is unavailable.
+  }
+  const confirmed = window.confirm(
+    `${profile.label} has a browser download of ${profile.downloadSize}. It will be cached locally and can use substantial memory. Download and load it now?`,
+  );
+  if (confirmed) {
+    try {
+      sessionStorage.setItem(confirmationKey, 'true');
+    } catch (error) {
+      // The model can still load when browser storage is unavailable.
+    }
+  }
+  return confirmed;
+};
+
+const TRANSCRIPTION_OPTIONS = {
+  return_timestamps: 'word',
+  generate_kwargs: {
+    task: 'transcribe',
+    condition_on_prev_tokens: false,
+    suppress_tokens: [-1],
+  },
+};
+
+const transcribeAudioChunk = async (audio, pipelineInstance) => {
+  try {
+    return await pipelineInstance(audio, TRANSCRIPTION_OPTIONS);
+  } catch (error) {
+    const message = error?.message || String(error);
+    const lacksCrossAttention = message.includes('cross attentions') || message.includes('output_attentions=True');
+    if (!lacksCrossAttention) throw error;
+
+    if (modelStatus) {
+      modelStatus.textContent = 'This quantized model does not provide word timestamps; retrying transcription without timestamps.';
+    }
+    return pipelineInstance(audio, {
+      ...TRANSCRIPTION_OPTIONS,
+      return_timestamps: false,
+    });
+  }
+};
+
+const normalizeToken = (value) => String(value || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+const normalizeForAligner = (word) => String(word || '').toLowerCase().replace(/[^a-z']/g, '');
+
+const mergeChunkPayloads = (payloads) => {
+  const mergedWords = [];
+  const textParts = [];
+  payloads.filter(Boolean).forEach((payload) => {
+    const currentWords = payload.words || [];
+    let duplicateCount = 0;
+    const compareLimit = Math.min(20, mergedWords.length, currentWords.length);
+    for (let count = compareLimit; count > 0; count -= 1) {
+      const previous = mergedWords.slice(-count).map((word) => normalizeToken(word.text));
+      const current = currentWords.slice(0, count).map((word) => normalizeToken(word.text));
+      if (previous.every((word, index) => word && word === current[index])) {
+        duplicateCount = count;
+        break;
+      }
+    }
+    mergedWords.push(...currentWords.slice(duplicateCount));
+
+    const currentText = String(payload.text || '').trim();
+    if (currentText) {
+      const currentTokens = currentText.split(/\s+/);
+      const previousTokens = textParts.join(' ').split(/\s+/).filter(Boolean);
+      const maxOverlap = Math.min(20, previousTokens.length, currentTokens.length);
+      let textOverlap = 0;
+      for (let count = maxOverlap; count > 0; count -= 1) {
+        const previous = previousTokens.slice(-count).map(normalizeToken);
+        const current = currentTokens.slice(0, count).map(normalizeToken);
+        if (previous.every((word, index) => word && word === current[index])) {
+          textOverlap = count;
+          break;
+        }
+      }
+      textParts.push(currentTokens.slice(textOverlap).join(' '));
+    }
+  });
+  return { text: textParts.join(' ').replace(/\s+/g, ' ').trim(), words: mergedWords };
 };
 
 const mergeToMono = (buffer) => {
@@ -498,7 +696,7 @@ const setTranscriptWordsTiming = (duration, explicitTimings = []) => {
   const totalWords = transcriptWords.length;
   const durationMs = duration * 1000;
   transcriptWords.forEach((entry, idx) => {
-    const explicitTiming = explicitTimings[idx] ?? explicitTimings[explicitTimings.length - 1] ?? null;
+    const explicitTiming = explicitTimings[idx] ?? null;
     if (explicitTiming?.startTimeMs != null && explicitTiming?.endTimeMs != null) {
       entry.startTimeMs = explicitTiming.startTimeMs;
       entry.endTimeMs = explicitTiming.endTimeMs;
@@ -543,13 +741,21 @@ const findActiveWordIndex = (currentTime) => {
     const word = transcriptWords[idx];
     if (currentTimeMs >= word.startTimeMs && currentTimeMs < word.endTimeMs) return idx;
   }
-  if (currentTimeMs >= transcriptWords[transcriptWords.length - 1].startTimeMs) {
-    return transcriptWords.length - 1;
-  }
   return -1;
 };
 
 let highlightFrame = null;
+const SHOW_WORD_TIMESTAMPS = true;
+let lastHighlightDebugIndex = -1;
+
+const formatWordTimestamp = (milliseconds) => {
+  if (!Number.isFinite(milliseconds)) return '';
+  const totalSeconds = Math.max(0, milliseconds) / 1000;
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = Math.floor(totalSeconds % 60);
+  const millis = Math.floor(milliseconds % 1000).toString().padStart(3, '0');
+  return `(${minutes}:${seconds.toString().padStart(2, '0')}.${millis})`;
+};
 
 const updateTranscriptHighlights = () => {
   if (!audioPlayer || !transcriptWords.length) return;
@@ -560,6 +766,20 @@ const updateTranscriptHighlights = () => {
     transcriptWords[activeWordIndex].element.classList.remove('highlight-current');
   }
   activeWordIndex = nextIndex;
+  if (nextIndex !== lastHighlightDebugIndex) {
+    const activeWord = nextIndex >= 0 ? transcriptWords[nextIndex] : null;
+    console.debug('[transcriber] highlight sync', {
+      mediaTimeMs: Math.round(audioPlayer.currentTime * 1000),
+      wordIndex: nextIndex,
+      word: activeWord?.text || null,
+      wordStartTimeMs: activeWord?.startTimeMs ?? null,
+      wordEndTimeMs: activeWord?.endTimeMs ?? null,
+      deltaToWordStartMs: activeWord?.startTimeMs != null
+        ? Math.round(audioPlayer.currentTime * 1000 - activeWord.startTimeMs)
+        : null,
+    });
+    lastHighlightDebugIndex = nextIndex;
+  }
   if (activeWordIndex >= 0 && transcriptWords[activeWordIndex]) {
     const element = transcriptWords[activeWordIndex].element;
     element.classList.add('highlight-current');
@@ -600,6 +820,7 @@ const renderTranscript = (text, duration, wordTimings = []) => {
   currentTranscriptWordTimings = Array.isArray(wordTimings) ? wordTimings : [];
   transcriptWords = [];
   activeWordIndex = -1;
+  lastHighlightDebugIndex = -1;
   const tokens = text.match(/(\s+|[^\s]+)/g) || [];
   const fragment = document.createDocumentFragment();
   let wordIndex = 0;
@@ -633,8 +854,9 @@ const renderTranscript = (text, duration, wordTimings = []) => {
       startTimeMs: explicitTiming?.startTimeMs ?? null,
       endTimeMs: explicitTiming?.endTimeMs ?? null,
     });
+    const renderedWordIndex = wordIndex;
     span.addEventListener('click', () => {
-      const entry = transcriptWords[wordIndex];
+      const entry = transcriptWords[renderedWordIndex];
       if (entry?.startTimeMs != null) {
         audioPlayer.currentTime = entry.startTimeMs / 1000;
         audioPlayer.play();
@@ -653,6 +875,12 @@ const renderTranscript = (text, duration, wordTimings = []) => {
   transcriptEl.innerHTML = '';
   transcriptEl.appendChild(fragment);
   setTranscriptWordsTiming(duration, currentTranscriptWordTimings);
+  transcriptWords.forEach((entry) => {
+    const timestampPrefix = SHOW_WORD_TIMESTAMPS && entry.startTimeMs != null
+      ? `${formatWordTimestamp(entry.startTimeMs)} `
+      : '';
+    entry.element.textContent = `${timestampPrefix}${entry.text}`;
+  });
   updateTranscriptHighlights();
 };
 
@@ -824,13 +1052,15 @@ const streamTranscribeLargeFile = async (file, pipelineInstance, updateProgress 
   let queue = Promise.resolve();
   let decodeError = null;
   let streamedOffsetMs = 0;
+  let decodedSampleCount = 0;
 
   const enqueueChunk = (chunk) => {
+    decodedSampleCount += chunk.length;
     queue = queue.then(async () => {
       const chunkIndex = ++chunkCounter;
       const chunkDurationMs = Math.round((chunk.length / 16000) * 1000);
       updateProgress(`Transcribing chunk ${chunkIndex}`, `Processed ${chunkIndex} chunks`, 55 + Math.min(35, chunkIndex * 2));
-      const result = await pipelineInstance(chunk, { return_timestamps: 'word' });
+      const result = await transcribeAudioChunk(chunk, pipelineInstance);
       const normalized = normalizeTranscriptionPayload(result, streamedOffsetMs);
       if (normalized.text) {
         chunkTexts.push(normalized.text);
@@ -877,7 +1107,7 @@ const streamTranscribeLargeFile = async (file, pipelineInstance, updateProgress 
       resampledBuffer = new Float32Array(0);
     }
     await queue;
-    return { text: chunkTexts.join(' '), words: chunkWordTimings };
+    return { text: chunkTexts.join(' '), words: chunkWordTimings, decodedDurationSeconds: decodedSampleCount / 16000 };
   };
 
   try {
@@ -934,24 +1164,221 @@ const ensureAudioContext = async () => {
 // transcriptions. It also prepares the selected audio so the main workflow can
 // start quickly.
 // -----------------------------------------------------------------------------
-const preloadPipeline = async (device) => {
+const preloadPipeline = async (device, modelId = getSelectedModelId()) => {
   // This function loads the speech recognition model once and reuses it.
   // The model is not built into the browser; it is fetched from the Hugging Face
   // package and then used locally in the page. That is why the first run can
   // take a little longer than later runs.
-  if (asrPipeline) return asrPipeline;
+  if (asrPipeline && loadedModelId === modelId) return asrPipeline;
+  if (asrPipeline && loadedModelId !== modelId) {
+    asrPipeline = null;
+    loadedModelId = null;
+  }
   if (!preloadPipelinePromise) {
-    preloadPipelinePromise = pipeline('automatic-speech-recognition', 'Xenova/whisper-tiny', { device })
+    const profile = getModelProfile(modelId);
+    const loadToken = ++pipelineLoadToken;
+    resetModelDownloadDebug(modelId);
+    modelDownloadDebug.open = true;
+    const loadPromise = pipeline('automatic-speech-recognition', profile.model, {
+      device,
+      ...(profile.dtype ? { dtype: profile.dtype } : {}),
+      progress_callback: (progress) => updateModelDownloadDebug(progress, modelId),
+    });
+    let timeoutId;
+    const timeoutPromise = new Promise((resolve, reject) => {
+      timeoutId = setTimeout(() => reject(new Error(`${profile.label} did not finish initializing within 5 minutes. This browser may not have enough WebGPU memory. Try Whisper Small or Base.`)), 5 * 60 * 1000);
+    });
+    preloadPipelinePromise = Promise.race([loadPromise, timeoutPromise])
+      .finally(() => clearTimeout(timeoutId))
       .then((loadedPipeline) => {
-        asrPipeline = loadedPipeline;
+        if (loadToken === pipelineLoadToken && getSelectedModelId() === modelId) {
+          asrPipeline = loadedPipeline;
+          loadedModelId = modelId;
+        }
+        modelDownloadBar.style.width = '100%';
+        modelDownloadState.textContent = 'Model initialized and ready. Files are cached by Transformers.js.';
         return loadedPipeline;
       })
       .catch((error) => {
         preloadPipelinePromise = null;
+        asrPipeline = null;
+        loadedModelId = null;
+        modelDownloadState.textContent = `Model initialization failed: ${error?.message || error}`;
         throw error;
       });
   }
   return preloadPipelinePromise;
+};
+
+const preloadHighlightModel = async (device) => {
+  if (highlightProcessor && highlightModel) return { processor: highlightProcessor, model: highlightModel };
+  if (highlightLoadPromise) return highlightLoadPromise;
+
+  resetModelDownloadDebug(HIGHLIGHT_MODEL_ID);
+  modelDownloadDebug.open = true;
+  highlightLoadPromise = Promise.all([
+    AutoProcessor.from_pretrained(HIGHLIGHT_MODEL_ID, {
+      progress_callback: (progress) => updateModelDownloadDebug(progress, HIGHLIGHT_MODEL_ID),
+    }),
+    AutoTokenizer.from_pretrained(HIGHLIGHT_MODEL_ID, {
+      progress_callback: (progress) => updateModelDownloadDebug(progress, HIGHLIGHT_MODEL_ID),
+    }),
+    AutoModelForCTC.from_pretrained(HIGHLIGHT_MODEL_ID, {
+      device,
+      dtype: HIGHLIGHT_MODEL_PROFILE.dtype,
+      progress_callback: (progress) => updateModelDownloadDebug(progress, HIGHLIGHT_MODEL_ID),
+    }),
+  ])
+    .then(([processor, tokenizer, model]) => {
+      highlightProcessor = processor;
+      highlightTokenizer = tokenizer;
+      highlightModel = model;
+      modelDownloadBar.style.width = '100%';
+      modelDownloadState.textContent = 'Highlight model initialized and ready. Files are cached by Transformers.js.';
+      return { processor, model };
+    })
+    .catch((error) => {
+      highlightLoadPromise = null;
+      highlightProcessor = null;
+      highlightTokenizer = null;
+      highlightModel = null;
+      throw error;
+    });
+  return highlightLoadPromise;
+};
+
+const tensorValues = (tensor) => tensor?.data ? tensor.data : tensor;
+
+const ctcForcedAlign = (logits, targetIds, blankId, durationSeconds) => {
+  const dims = logits.dims || [];
+  if (dims.length !== 3 || dims[0] !== 1 || !targetIds.length) {
+    console.debug('[transcriber] CTC alignment rejected: invalid logits or target sequence', { dims, targetTokenCount: targetIds.length });
+    return [];
+  }
+  const values = tensorValues(logits);
+  const channelsFirst = dims[1] === 31;
+  const vocabularySize = channelsFirst ? dims[1] : dims[2];
+  const frameCount = channelsFirst ? dims[2] : dims[1];
+  if (!frameCount || !vocabularySize) {
+    console.debug('[transcriber] CTC alignment rejected: empty logits', { dims });
+    return [];
+  }
+
+  // CTC requires a blank between every target symbol. This also handles
+  // repeated letters such as the two l characters in "hello" correctly.
+  const labels = new Int32Array(targetIds.length * 2 + 1);
+  labels.fill(blankId);
+  targetIds.forEach((tokenId, index) => {
+    labels[index * 2 + 1] = tokenId;
+  });
+  const labelCount = labels.length;
+  if (labelCount > frameCount) {
+    console.debug('[transcriber] CTC alignment rejected: transcript needs more frames than audio provides', { frameCount, labelCount, targetTokenCount: targetIds.length });
+    return [];
+  }
+  const trellis = new Float64Array((frameCount + 1) * labelCount);
+  const backpointers = new Int32Array((frameCount + 1) * labelCount);
+  trellis.fill(-Infinity);
+  backpointers.fill(-1);
+  trellis[0] = 0;
+
+  const valueAt = (frame, tokenId) => channelsFirst
+    ? values[tokenId * frameCount + frame]
+    : values[frame * vocabularySize + tokenId];
+  const logProbability = (frame, tokenId) => {
+    let maxLogit = -Infinity;
+    for (let index = 0; index < vocabularySize; index += 1) maxLogit = Math.max(maxLogit, valueAt(frame, index));
+    let denominator = 0;
+    for (let index = 0; index < vocabularySize; index += 1) denominator += Math.exp(valueAt(frame, index) - maxLogit);
+    return valueAt(frame, tokenId) - maxLogit - Math.log(denominator);
+  };
+
+  for (let frame = 1; frame <= frameCount; frame += 1) {
+    const previousRow = (frame - 1) * labelCount;
+    const currentRow = frame * labelCount;
+    for (let label = 0; label < labelCount; label += 1) {
+      let best = trellis[previousRow + label];
+      let previousLabel = label;
+      if (label > 0 && trellis[previousRow + label - 1] > best) {
+        best = trellis[previousRow + label - 1];
+        previousLabel = label - 1;
+      }
+      if (label > 1 && labels[label] !== blankId && labels[label] !== labels[label - 2]
+        && trellis[previousRow + label - 2] > best) {
+        best = trellis[previousRow + label - 2];
+        previousLabel = label - 2;
+      }
+      trellis[currentRow + label] = best + logProbability(frame - 1, labels[label]);
+      backpointers[currentRow + label] = previousLabel;
+    }
+  }
+
+  let frame = frameCount;
+  let label = labelCount - 1;
+  if (trellis[frame * labelCount + label - 1] > trellis[frame * labelCount + label]) label -= 1;
+  if (!Number.isFinite(trellis[frame * labelCount + label])) {
+    console.debug('[transcriber] CTC alignment rejected: final traceback state is unreachable');
+    return [];
+  }
+  const labelFrames = targetIds.map(() => ({ start: frameCount, end: 0 }));
+  while (frame > 0 && label > 0) {
+    if (label % 2 === 1) {
+      const tokenIndex = (label - 1) / 2;
+      labelFrames[tokenIndex].start = Math.min(labelFrames[tokenIndex].start, frame - 1);
+      labelFrames[tokenIndex].end = Math.max(labelFrames[tokenIndex].end, frame);
+    }
+    label = backpointers[frame * labelCount + label];
+    if (label < 0) {
+      console.debug('[transcriber] CTC alignment rejected: missing traceback pointer');
+      return [];
+    }
+    frame -= 1;
+  }
+
+  if (label > 0 || labelFrames.some((span) => span.end <= span.start)) {
+    console.debug('[transcriber] CTC alignment rejected: incomplete token spans', {
+      remainingLabels: label,
+      missingSpans: labelFrames.filter((span) => span.end <= span.start).length,
+    });
+    return [];
+  }
+
+  const frameDurationMs = (durationSeconds * 1000) / frameCount;
+  return labelFrames.map((span) => ({
+    startTimeMs: Math.round(span.start * frameDurationMs),
+    endTimeMs: Math.round(span.end * frameDurationMs),
+  }));
+};
+
+const alignTranscriptWords = async (audio, text, device) => {
+  const { processor, model } = await preloadHighlightModel(device);
+  const tokenizer = highlightTokenizer;
+  if (!tokenizer) return [];
+  const words = text.match(/\S+/g) || [];
+  const targetIds = [];
+  const wordRanges = [];
+  words.forEach((word, index) => {
+    const cleanWord = normalizeForAligner(word);
+    const ids = Array.from(tokenizer.encode(cleanWord, { add_special_tokens: false }));
+    if (!ids.length) return;
+    wordRanges.push({ start: targetIds.length, end: targetIds.length + ids.length, index });
+    targetIds.push(...ids);
+  });
+  if (!targetIds.length || wordRanges.length !== words.length) return [];
+
+  const inputs = await processor(audio);
+  const output = await model(inputs);
+  const logits = output.logits;
+  const blankId = tokenizer.convert_tokens_to_ids('<blank>');
+  const tokenTimings = ctcForcedAlign(logits, targetIds, Number.isInteger(blankId) ? blankId : 0, audio.length / 16000);
+  const alignedWords = wordRanges.map((range) => {
+    const spans = tokenTimings.slice(range.start, range.end).filter((span) => span.endTimeMs > span.startTimeMs);
+    if (!spans.length) return null;
+    const startTimeMs = spans[0].startTimeMs;
+    const endTimeMs = spans[spans.length - 1].endTimeMs;
+    return { text: words[range.index], startTimeMs, endTimeMs, startTime: startTimeMs / 1000, endTime: endTimeMs / 1000 };
+  });
+  return alignedWords.some((word) => !word) ? [] : alignedWords;
 };
 
 const prepareAudio = async (file) => {
@@ -992,6 +1419,7 @@ const transcribeLargeMp3File = async (file, pipelineInstance, updateProgress = (
   const wordTimings = [];
   let sliceIndex = 0;
   let totalSlices = Math.ceil((view.length - offset) / sliceSize);
+  let decodedSampleCount = 0;
 
   while (offset < view.length) {
     let end = Math.min(offset + sliceSize, view.length);
@@ -1020,12 +1448,13 @@ const transcribeLargeMp3File = async (file, pipelineInstance, updateProgress = (
 
     const monoData = mergeToMono(decoded);
     const resampled = resampleAudio(monoData, decoded.sampleRate, 16000);
+    decodedSampleCount += resampled.length;
     pendingBuffer = appendFloat32(pendingBuffer, resampled);
 
     while (pendingBuffer.length >= ASR_CHUNK_SIZE) {
       const chunk = pendingBuffer.subarray(0, ASR_CHUNK_SIZE);
       pendingBuffer = pendingBuffer.subarray(ASR_CHUNK_SIZE);
-      const chunkResult = await pipelineInstance(chunk, { return_timestamps: 'word' });
+      const chunkResult = await transcribeAudioChunk(chunk, pipelineInstance);
       const normalized = normalizeTranscriptionPayload(chunkResult, Math.round((sliceIndex - 1) * sliceSize / 16000 * 1000));
       if (normalized.text) texts.push(normalized.text);
       if (normalized.words.length) wordTimings.push(...normalized.words);
@@ -1035,12 +1464,12 @@ const transcribeLargeMp3File = async (file, pipelineInstance, updateProgress = (
   }
 
   if (pendingBuffer.length > 0) {
-    const chunkResult = await pipelineInstance(pendingBuffer, { return_timestamps: 'word' });
+    const chunkResult = await transcribeAudioChunk(pendingBuffer, pipelineInstance);
     const normalized = normalizeTranscriptionPayload(chunkResult, Math.round((sliceIndex - 1) * sliceSize / 16000 * 1000));
     if (normalized.text) texts.push(normalized.text);
     if (normalized.words.length) wordTimings.push(...normalized.words);
   }
-  return { text: texts.join(' '), words: wordTimings };
+  return { text: texts.join(' '), words: wordTimings, decodedDurationSeconds: decodedSampleCount / 16000 };
 };
 
 const formatTranscript = (text) => {
@@ -1092,6 +1521,35 @@ const decodeAudioFile = async (file) => {
 // -----------------------------------------------------------------------------
 personalization = getStoredPreferences();
 applyPersonalization();
+
+if (modelSelect) {
+  modelSelect.value = getSelectedModelId();
+  modelStatus.textContent = `Selected model: ${getModelProfile().label}`;
+  modelSelect.addEventListener('change', (event) => {
+    const nextModelId = event.target.value;
+    const nextProfile = getModelProfile(nextModelId);
+    if (nextModelId !== getSelectedModelId()) {
+      const confirmed = window.confirm(`${nextProfile.label} is a large browser download and may use substantial memory. Switch models? The current model will be unloaded.`);
+      if (!confirmed) {
+        modelSelect.value = getSelectedModelId();
+        return;
+      }
+      if (asrPipeline && loadedModelId !== nextModelId) {
+        asrPipeline = null;
+        loadedModelId = null;
+      }
+      pipelineLoadToken += 1;
+      preloadPipelinePromise = null;
+    }
+    try {
+      localStorage.setItem(MODEL_STORAGE_KEY, nextModelId);
+    } catch (error) {
+      console.warn('Unable to save model selection:', error);
+    }
+    modelStatus.textContent = `Selected model: ${nextProfile.label}. It will be downloaded and cached in this browser when needed.`;
+    statusEl.textContent = `${nextProfile.label} selected. Choose Transcribe to load it.`;
+  });
+}
 
 const customizeToggle = document.getElementById('customizeToggle');
 if (customizeToggle) {
@@ -1146,7 +1604,6 @@ audioInput.addEventListener('change', () => {
     } else {
       statusEl.textContent = `Large non-MP3 file selected; streaming decode will be used during transcription.`;
     }
-    preloadPipeline(getPreferredDevice()).catch(() => {});
   } else {
     statusEl.textContent = 'Please select an audio file to transcribe.';
   }
@@ -1241,21 +1698,44 @@ transcribeBtn.addEventListener('click', async () => {
 
   transcribeBtn.disabled = true;
   audioInput.disabled = true;
+  const modelId = getSelectedModelId();
+  const modelProfile = getModelProfile(modelId);
   const device = getPreferredDevice();
-  statusEl.textContent = `Loading the Whisper model on ${device.toUpperCase()} and preparing transcription...`;
+  const modelAlreadyLoaded = asrPipeline && loadedModelId === modelId;
+  if (!modelAlreadyLoaded && !confirmModelLazyLoad(modelId)) {
+    statusEl.textContent = `${modelProfile.label} was not loaded.`;
+    return;
+  }
+  statusEl.textContent = `Loading ${modelProfile.label} on ${device.toUpperCase()} and preparing transcription...`;
   showProgress('Preparing audio', 'Decoding file…', 10);
 
   try {
-    showProgress('Preparing', 'Decoding audio and loading Whisper Tiny…', 25);
+    showProgress('Preparing', `Decoding audio and loading ${modelProfile.label}…`, 25);
     const isLargeFile = currentFile.size > LARGE_FILE_STREAM_THRESHOLD;
     const isLargeMp3 = isLargeFile && isMp3File(currentFile);
     const useStreamDecode = isLargeFile && !isLargeMp3;
     const audioPromise = useStreamDecode
       ? Promise.resolve(null)
       : currentRawAudio ? Promise.resolve(currentRawAudio) : (currentAudioDataPromise || prepareAudio(currentFile));
-    const modelPromise = asrPipeline ? Promise.resolve(asrPipeline) : preloadPipeline(device);
+    const modelPromise = asrPipeline && loadedModelId === modelId
+      ? Promise.resolve(asrPipeline)
+      : preloadPipeline(device, modelId);
     const [rawAudio, pipelineInstance] = await Promise.all([audioPromise, modelPromise]);
     asrPipeline = pipelineInstance;
+    loadedModelId = modelId;
+    modelStatus.textContent = `Active model: ${modelProfile.label}. Cached in this browser.`;
+    if (USE_CTC_HIGHLIGHT_ALIGNMENT && (!highlightProcessor || !highlightModel)) {
+      const loadHighlightModel = confirmModelLazyLoad(HIGHLIGHT_MODEL_ID);
+      if (loadHighlightModel) {
+        statusEl.textContent = 'Loading the cached CTC highlight model...';
+        try {
+          await preloadHighlightModel(device);
+        } catch (alignmentModelError) {
+          console.warn('CTC highlight model unavailable; continuing with Whisper timings:', alignmentModelError);
+          modelStatus.textContent = 'CTC highlight model unavailable; Whisper timings will be used.';
+        }
+      }
+    }
     showProgress('Transcribing', 'Running ASR pipeline…', 55);
 
     let result;
@@ -1271,11 +1751,15 @@ transcribeBtn.addEventListener('click', async () => {
       const durationSeconds = rawAudio.length / 16000;
       const chunkSeconds = Math.min(90, Math.max(30, Math.ceil(durationSeconds / 8)));
       const chunkSize = chunkSeconds * 16000;
+      const chunkStep = chunkSize - ASR_OVERLAP_SAMPLES;
       const transcribeChunks = async (audioArray) => {
         const totalChunks = Math.ceil(audioArray.length / chunkSize);
         const chunks = [];
-        for (let offset = 0; offset < audioArray.length; offset += chunkSize) {
-          chunks.push(audioArray.subarray(offset, Math.min(offset + chunkSize, audioArray.length)));
+        for (let offset = 0; offset < audioArray.length; offset += chunkStep) {
+          chunks.push({
+            audio: audioArray.subarray(offset, Math.min(offset + chunkSize, audioArray.length)),
+            offset,
+          });
         }
 
         try {
@@ -1293,9 +1777,9 @@ transcribeBtn.addEventListener('click', async () => {
             const idx = cursor++;
             if (idx >= chunks.length) break;
             const chunk = chunks[idx];
-            const chunkOffsetMs = Math.round((idx * chunkSize) / 16000 * 1000);
+            const chunkOffsetMs = Math.round((chunk.offset / 16000) * 1000);
             showProgress('Transcribing', `Chunk ${idx + 1} / ${chunks.length}...`, 55 + Math.round((idx / chunks.length) * 35));
-            const chunkResult = await asrPipeline(chunk, { return_timestamps: 'word' });
+            const chunkResult = await transcribeAudioChunk(chunk.audio, asrPipeline);
             const normalized = normalizeTranscriptionPayload(chunkResult, chunkOffsetMs);
             results[idx] = normalized;
           }
@@ -1305,13 +1789,7 @@ transcribeBtn.addEventListener('click', async () => {
         for (let i = 0; i < concurrency; i++) workers.push(worker());
         await Promise.all(workers);
 
-        const textParts = [];
-        const wordTimings = [];
-        results.filter(Boolean).forEach((payload) => {
-          if (payload?.text) textParts.push(payload.text);
-          if (payload?.words?.length) wordTimings.push(...payload.words);
-        });
-        return { text: textParts.join(' '), words: wordTimings };
+        return mergeChunkPayloads(results);
       };
 
       result = await transcribeChunks(rawAudio);
@@ -1335,16 +1813,45 @@ transcribeBtn.addEventListener('click', async () => {
 
     const formattedText = formatTranscript(text || '');
     currentTranscript = formattedText;
+    let highlightTimings = recognizedWordTimings;
+    let ctcAlignmentApplied = false;
+    if (USE_CTC_HIGHLIGHT_ALIGNMENT && rawAudio && formattedText && highlightProcessor && highlightModel) {
+      try {
+        statusEl.textContent = 'Aligning transcript words for playback highlighting...';
+        const alignedTimings = await alignTranscriptWords(rawAudio, formattedText, device);
+        const displayWordCount = (formattedText.match(/\S+/g) || []).filter((word) => /[A-Za-z0-9]/.test(word)).length;
+        if (alignedTimings.length !== displayWordCount) {
+          throw new Error(`CTC alignment returned ${alignedTimings.length} timings for ${displayWordCount} rendered words.`);
+        }
+        highlightTimings = alignedTimings;
+        ctcAlignmentApplied = true;
+      } catch (alignmentError) {
+        console.warn('CTC highlight alignment failed; retaining ASR timings:', alignmentError);
+      }
+    }
     enableDownload(formattedText);
     if (currentFile) {
       audioPlayer.src = URL.createObjectURL(currentFile);
       audioPlayer.classList.remove('hidden');
     }
-    renderTranscript(formattedText, audioPlayer.duration, recognizedWordTimings);
+    const decodedDurationSeconds = Number.isFinite(result?.decodedDurationSeconds)
+      ? result.decodedDurationSeconds
+      : rawAudio?.length / 16000;
+    const playbackDurationSeconds = await waitForAudioMetadata();
+    highlightTimings = rescaleWordTimingsToPlayback(
+      highlightTimings,
+      decodedDurationSeconds,
+      playbackDurationSeconds,
+    );
+    // CTC timings are used when the aligner returns a complete word sequence;
+    // Whisper timings remain the fallback when CTC is unavailable or declined.
+    renderTranscript(formattedText, audioPlayer.duration, highlightTimings);
     lastTranscriptionElapsed = performance.now() - transcriptionStartTime;
     lastAudioDuration = Number.isFinite(audioPlayer.duration) ? audioPlayer.duration : null;
     updateDebugInfo();
-    statusEl.textContent = 'Transcription complete.';
+    statusEl.textContent = ctcAlignmentApplied
+      ? 'Transcription complete. CTC word alignment applied.'
+      : 'Transcription complete. Whisper word timings used as fallback.';
     showProgress('Complete', 'Done', 100);
   } catch (error) {
     console.error(error);

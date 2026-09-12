@@ -42,6 +42,22 @@
                 </div>
 
                 <div class="mt-4 grid gap-4 md:grid-cols-3">
+                    <div class="md:col-span-3 rounded-2xl border border-sky-400/20 bg-sky-400/5 p-4">
+                        <div class="flex flex-wrap items-start justify-between gap-3">
+                            <div>
+                                <p class="text-sm font-medium text-slate-200">Whisper accuracy</p>
+                                <p class="mt-1 text-xs leading-5 text-slate-400">Models download to this browser and stay cached for later runs. Higher accuracy uses more memory and takes longer.</p>
+                            </div>
+                            <select id="modelSelect" class="w-full rounded-2xl border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 outline-none sm:w-auto">
+                                <option value="default">Default · Whisper Base</option>
+                                <option value="medium">Medium · Whisper Small</option>
+                                <option value="highLite">High-lite · Whisper Large V3 Turbo</option>
+                                <option value="high">High · Whisper Large V3</option>
+                            </select>
+                        </div>
+                        <p id="modelStatus" class="mt-3 text-xs text-slate-500">Default model: Whisper Base</p>
+                    </div>
+
                     <div>
                         <p class="text-sm font-medium text-slate-300">Theme</p>
                         <div class="mt-2 grid grid-cols-5 gap-2">
@@ -97,6 +113,18 @@
 
         <div id="status" class="mt-6 rounded-3xl border border-slate-800 bg-slate-950/80 p-3 text-sm text-slate-300 sm:p-4"></div>
         <div id="debugInfo" class="mt-2 rounded-3xl border border-slate-800 bg-slate-950/80 p-3 text-xs text-slate-400"></div>
+        <details id="modelDownloadDebug" class="mt-2 rounded-3xl border border-slate-800 bg-slate-950/80 p-3 text-xs text-slate-400">
+            <summary class="cursor-pointer select-none font-medium text-slate-300">Model download details</summary>
+            <div class="mt-3 grid gap-2 sm:grid-cols-3">
+                <div><span class="text-slate-500">Model</span><p id="modelDownloadName" class="mt-1 text-slate-200">Not started</p></div>
+                <div><span class="text-slate-500">Downloaded</span><p id="modelDownloadedSize" class="mt-1 text-slate-200">0 MB</p></div>
+                <div><span class="text-slate-500">Remaining</span><p id="modelRemainingSize" class="mt-1 text-slate-200">Unknown</p></div>
+            </div>
+            <div class="mt-3 h-2 overflow-hidden rounded-full bg-slate-800">
+                <div id="modelDownloadBar" class="h-full w-0 bg-sky-500 transition-all duration-300"></div>
+            </div>
+            <p id="modelDownloadState" class="mt-2 text-slate-500">Waiting for a model download.</p>
+        </details>
         <div id="progressContainer" class="mt-4 hidden rounded-3xl bg-slate-950/80 p-3 sm:p-4">
             <div class="flex items-center justify-between gap-4 text-sm text-slate-200">
                 <div class="inline-flex items-center gap-3">
@@ -139,7 +167,7 @@
 
     <div class="mt-6 w-full max-w-3xl rounded-3xl border border-slate-800 bg-slate-900/90 px-4 py-4 text-sm text-slate-400 shadow-xl shadow-slate-950/20 sm:mt-8 sm:px-6 sm:py-5 sm:text-base">
       <p class="text-slate-300">No server required. Models and computation run in the browser.</p>
-      <p class="mt-3">If the model is not loaded yet, the first transcription may take a minute while the Whisper Tiny model downloads and initializes.</p>
+        <p class="mt-3">If the model is not loaded yet, the first transcription may take a minute while the selected Whisper model downloads and initializes.</p>
     </div>
   </div>
 
