@@ -57,6 +57,7 @@ let currentRawAudio = null;
 let preloadPipelinePromise = null;
 let transcriptionStartTime = null;
 let lastTranscriptionElapsed = null;
+let elapsedTimerInterval = null;
 let lastAudioDuration = null;
 let loadedModelId = null;
 let pipelineLoadToken = 0;
@@ -345,6 +346,28 @@ const errorModal = document.getElementById('errorModal');
 const errorMessage = document.getElementById('errorMessage');
 const closeErrorModal = document.getElementById('closeErrorModal');
 const retryErrorBtn = document.getElementById('retryErrorBtn');
+const infoToggle = document.getElementById('infoToggle');
+const infoModal = document.getElementById('infoModal');
+const closeInfoModal = document.getElementById('closeInfoModal');
+
+const closeInfoDialog = () => {
+  infoModal.classList.add('hidden');
+  infoModal.classList.remove('flex');
+  infoToggle.focus();
+};
+
+infoToggle.addEventListener('click', () => {
+  infoModal.classList.remove('hidden');
+  infoModal.classList.add('flex');
+  closeInfoModal.focus();
+});
+closeInfoModal.addEventListener('click', closeInfoDialog);
+infoModal.addEventListener('click', (event) => {
+  if (event.target === infoModal) closeInfoDialog();
+});
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && !infoModal.classList.contains('hidden')) closeInfoDialog();
+});
 
 const showProgress = (label, state, percent = 0) => {
   progressContainer.classList.remove('hidden');
@@ -374,7 +397,10 @@ const formatTime = (seconds) => {
 
 const updateDebugInfo = () => {
   if (!debugInfo) return;
-  const elapsedText = lastTranscriptionElapsed != null ? formatTime(lastTranscriptionElapsed / 1000) : 'pending';
+  const elapsedMilliseconds = transcriptionStartTime != null && lastTranscriptionElapsed == null
+    ? performance.now() - transcriptionStartTime
+    : lastTranscriptionElapsed;
+  const elapsedText = elapsedMilliseconds != null ? formatTime(elapsedMilliseconds / 1000) : 'pending';
   const audioText = Number.isFinite(lastAudioDuration) ? formatTime(lastAudioDuration) : 'unknown';
   debugInfo.textContent = `Transcribe elapsed: ${elapsedText} · Audio duration: ${audioText}`;
 };
@@ -451,7 +477,13 @@ const getModelProfile = (modelId = getSelectedModelId()) => modelId === HIGHLIGH
   ? HIGHLIGHT_MODEL_PROFILE
   : MODEL_PROFILES[modelId] || MODEL_PROFILES[DEFAULT_MODEL_ID];
 
-const formatMegabytes = (bytes) => Number.isFinite(bytes) ? `${(bytes / (1024 * 1024)).toFixed(1)} MB` : 'Unknown';
+const formatMegabytes = (bytes) => {
+  if (!Number.isFinite(bytes)) return 'Unknown';
+  const megabytes = bytes / 1_000_000;
+  return megabytes >= 1000
+    ? `${megabytes.toFixed(1)} MB (${(megabytes / 1000).toFixed(2)} GB)`
+    : `${megabytes.toFixed(1)} MB`;
+};
 
 const resetModelDownloadDebug = (modelId) => {
   modelDownloadFiles.clear();
@@ -460,6 +492,7 @@ const resetModelDownloadDebug = (modelId) => {
   modelDownloadedSize.textContent = '0 MB';
   modelRemainingSize.textContent = 'Unknown';
   modelDownloadBar.style.width = '0%';
+  modelDownloadBar.parentElement.classList.add('hidden');
   modelDownloadState.textContent = 'Waiting for download progress...';
 };
 
@@ -475,14 +508,18 @@ const updateModelDownloadDebug = (progress, modelId) => {
   const totals = [...modelDownloadFiles.values()];
   const downloaded = totals.reduce((sum, file) => sum + (file.loaded || 0), 0);
   const total = totals.some((file) => file.total == null) ? null : totals.reduce((sum, file) => sum + file.total, 0);
-  const percentage = total ? Math.min(100, (downloaded / total) * 100) : Number.isFinite(progress.progress) ? progress.progress : 0;
+  const hasKnownTotal = total != null && total > 0;
+  const percentage = hasKnownTotal ? Math.min(100, (downloaded / total) * 100) : 0;
   modelDownloadName.textContent = getModelProfile(modelId).label;
   modelDownloadedSize.textContent = formatMegabytes(downloaded);
   modelRemainingSize.textContent = total == null ? 'Unknown' : formatMegabytes(Math.max(0, total - downloaded));
   modelDownloadBar.style.width = `${percentage}%`;
+  modelDownloadBar.parentElement.classList.toggle('hidden', !hasKnownTotal);
   modelDownloadState.textContent = progress.status === 'done'
     ? `Downloaded ${formatMegabytes(downloaded)}. Checking remaining model files...`
-    : `Downloading ${fileName} (${Math.round(percentage)}%)`;
+    : total == null
+      ? `Downloading ${fileName} · ${formatMegabytes(downloaded)} downloaded`
+      : `Downloading ${fileName} (${Math.round(percentage)}%) · ${formatMegabytes(downloaded)} downloaded`;
 };
 
 const confirmModelLazyLoad = (modelId) => {
@@ -494,7 +531,7 @@ const confirmModelLazyLoad = (modelId) => {
     // Continue with the confirmation if browser storage is unavailable.
   }
   const confirmed = window.confirm(
-    `${profile.label} has a browser download of ${profile.downloadSize}. It will be cached locally and can use substantial memory. Download and load it now?`,
+    `Estimated browser download: about ${profile.downloadSize.replace(/^about\s+/i, '')}. The actual total can vary by model files; downloaded bytes will be tracked in Model download details. The model will be cached locally and can use substantial memory. Download and load it now?`,
   );
   if (confirmed) {
     try {
@@ -1256,8 +1293,11 @@ const preloadPipeline = async (device, modelId = getSelectedModelId()) => {
           asrPipeline = loadedPipeline;
           loadedModelId = modelId;
         }
+        modelDownloadBar.parentElement.classList.remove('hidden');
         modelDownloadBar.style.width = '100%';
-        modelDownloadState.textContent = 'Model initialized and ready. Files are cached by Transformers.js.';
+        const downloadedBytes = [...modelDownloadFiles.values()].reduce((sum, file) => sum + (file.loaded || 0), 0);
+        const downloadedSummary = downloadedBytes > 0 ? ` Downloaded ${formatMegabytes(downloadedBytes)} this session.` : '';
+        modelDownloadState.textContent = `Model initialized and ready.${downloadedSummary} Files are cached by Transformers.js.`;
         return loadedPipeline;
       })
       .catch((error) => {
@@ -1793,13 +1833,6 @@ transcribeBtn.addEventListener('click', async () => {
     return;
   }
 
-  transcriptionStartTime = performance.now();
-  lastTranscriptionElapsed = null;
-  lastAudioDuration = null;
-  updateDebugInfo();
-
-  transcribeBtn.disabled = true;
-  audioInput.disabled = true;
   const modelId = getSelectedModelId();
   const modelProfile = getModelProfile(modelId);
   const translateToEnglish = getAutoTranslate();
@@ -1810,6 +1843,15 @@ transcribeBtn.addEventListener('click', async () => {
     statusEl.textContent = `${modelProfile.label} was not loaded.`;
     return;
   }
+  transcriptionStartTime = performance.now();
+  lastTranscriptionElapsed = null;
+  lastAudioDuration = null;
+  updateDebugInfo();
+  clearInterval(elapsedTimerInterval);
+  elapsedTimerInterval = setInterval(updateDebugInfo, 100);
+
+  transcribeBtn.disabled = true;
+  audioInput.disabled = true;
   statusEl.textContent = `Loading ${modelProfile.label} on ${device.toUpperCase()}, ${transcriptionModeLabel}...`;
   showProgress('Preparing audio', 'Decoding file…', 10);
 
@@ -1954,9 +1996,7 @@ transcribeBtn.addEventListener('click', async () => {
     // CTC timings are used when the aligner returns a complete word sequence;
     // Whisper timings remain the fallback when CTC is unavailable or declined.
     renderTranscript(formattedText, audioPlayer.duration, highlightTimings);
-    lastTranscriptionElapsed = performance.now() - transcriptionStartTime;
     lastAudioDuration = Number.isFinite(audioPlayer.duration) ? audioPlayer.duration : null;
-    updateDebugInfo();
     const timingStatus = ctcAlignmentApplied
       ? 'CTC word alignment applied.'
       : 'Whisper word timings used as fallback.';
@@ -1969,6 +2009,11 @@ transcribeBtn.addEventListener('click', async () => {
     showProgress('Error', 'Failed to transcribe', 100);
     showErrorModal(error);
   } finally {
+    clearInterval(elapsedTimerInterval);
+    elapsedTimerInterval = null;
+    lastTranscriptionElapsed = performance.now() - transcriptionStartTime;
+    transcriptionStartTime = null;
+    updateDebugInfo();
     transcribeBtn.disabled = !currentFile;
     audioInput.disabled = false;
   }

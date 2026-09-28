@@ -18,7 +18,10 @@
   
     <div class="mx-auto flex min-h-screen w-full max-w-5xl flex-col items-center justify-center px-3 py-4 sm:px-6 sm:py-8 lg:px-8 lg:py-10">
     
-        <div class="w-full rounded-3xl border border-slate-800 bg-slate-900/90 p-4 shadow-2xl shadow-slate-950/30 backdrop-blur sm:p-6 lg:p-8">
+        <div class="relative w-full rounded-3xl border border-slate-800 bg-slate-900/90 p-4 shadow-2xl shadow-slate-950/30 backdrop-blur sm:p-6 lg:p-8">
+            <button id="infoToggle" type="button" aria-label="Information" aria-haspopup="dialog" aria-controls="infoModal" title="Information" class="absolute right-4 top-4 inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-700 bg-slate-900/80 text-slate-300 transition hover:border-sky-400 hover:text-sky-300 focus:outline-none focus:ring-2 focus:ring-sky-400 sm:right-6 sm:top-6">
+                <i class="fa-solid fa-circle-info" aria-hidden="true"></i>
+            </button>
             
             <div class="mb-6 space-y-4 text-center sm:mb-8">
                 <p class="inline-flex items-center rounded-full bg-slate-800 px-4 py-2 text-[0.7rem] uppercase tracking-[0.3em] text-sky-300/90 sm:text-xs">Audio Transcriber</p>
@@ -187,7 +190,21 @@
     </div>
   </div>
 
-  <div id="errorModal" class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-950/80 px-3 py-4 sm:px-4 sm:py-6">
+    <div id="infoModal" class="fixed inset-0 z-40 hidden items-center justify-center bg-slate-950/80 px-3 py-4 sm:px-4 sm:py-6" role="dialog" aria-modal="true" aria-labelledby="infoTitle">
+        <div class="w-full max-w-lg rounded-3xl border border-slate-800 bg-slate-900 p-4 shadow-2xl shadow-slate-950/50 sm:p-6">
+            <div class="flex items-start justify-between gap-4">
+                <h2 id="infoTitle" class="text-xl font-semibold text-slate-100">About this transcription</h2>
+                <button id="closeInfoModal" type="button" aria-label="Close information" class="rounded-full border border-slate-700 bg-slate-800 px-3 py-2 text-slate-200 transition hover:border-sky-400 hover:text-white focus:outline-none focus:ring-2 focus:ring-sky-400"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
+            </div>
+            <div class="mt-4 space-y-3 text-sm leading-6 text-slate-300">
+                <p>Transcription runs in this browser. The elapsed timer updates while a transcription is active and includes model loading and audio preparation.</p>
+                <p>Model sizes shown before loading are estimates. Actual downloaded bytes vary by model files and are tracked in Model download details; totals switch to MB and GB at 1,000 MB.</p>
+                <p>Downloaded model files are cached by the browser and may be reused on later visits.</p>
+            </div>
+        </div>
+    </div>
+
+    <div id="errorModal" class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-950/80 px-3 py-4 sm:px-4 sm:py-6">
     <div class="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-3xl border border-slate-800 bg-slate-900 p-4 shadow-2xl shadow-slate-950/50 sm:p-6">
       <div class="flex items-start justify-between gap-4">
         <div>
