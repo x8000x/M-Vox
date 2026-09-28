@@ -5,7 +5,7 @@
 // the interface still loads when the connection is later unavailable.
 // -----------------------------------------------------------------------------
 
-const CACHE_NAME = 'transcriber2-offline-v1';
+const CACHE_NAME = 'transcriber2-offline-v4';
 const APP_SHELL = [
   './',
   './index.html',

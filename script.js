@@ -30,6 +30,9 @@ const progressState = document.getElementById('progressState');
 const progressBar = document.getElementById('progressBar');
 const modelSelect = document.getElementById('modelSelect');
 const modelStatus = document.getElementById('modelStatus');
+const languageSelect = document.getElementById('languageSelect');
+const languageStatus = document.getElementById('languageStatus');
+const autoTranslateToggle = document.getElementById('autoTranslateToggle');
 const modelDownloadDebug = document.getElementById('modelDownloadDebug');
 const modelDownloadName = document.getElementById('modelDownloadName');
 const modelDownloadedSize = document.getElementById('modelDownloadedSize');
@@ -78,9 +81,42 @@ const modelDownloadFiles = new Map();
 // -----------------------------------------------------------------------------
 const STORAGE_KEY = 'transcriber-personalization';
 const MODEL_STORAGE_KEY = 'transcriber-model-selection';
+const LANGUAGE_STORAGE_KEY = 'transcriber-language-selection';
+const TRANSLATE_STORAGE_KEY = 'transcriber-translate-to-english';
 const DEFAULT_MODEL_ID = 'default';
+const DEFAULT_LANGUAGE = 'auto';
+const LANGUAGE_OPTIONS = [
+  ['english', 'English'], ['chinese', 'Chinese'], ['german', 'German'], ['spanish', 'Spanish'],
+  ['russian', 'Russian'], ['korean', 'Korean'], ['french', 'French'], ['japanese', 'Japanese'],
+  ['portuguese', 'Portuguese'], ['turkish', 'Turkish'], ['polish', 'Polish'], ['catalan', 'Catalan'],
+  ['dutch', 'Dutch'], ['arabic', 'Arabic'], ['swedish', 'Swedish'], ['italian', 'Italian'],
+  ['indonesian', 'Indonesian'], ['hindi', 'Hindi'], ['finnish', 'Finnish'], ['vietnamese', 'Vietnamese'],
+  ['hebrew', 'Hebrew'], ['ukrainian', 'Ukrainian'], ['greek', 'Greek'], ['malay', 'Malay'],
+  ['czech', 'Czech'], ['romanian', 'Romanian'], ['danish', 'Danish'], ['hungarian', 'Hungarian'],
+  ['tamil', 'Tamil'], ['norwegian', 'Norwegian'], ['thai', 'Thai'], ['urdu', 'Urdu'],
+  ['croatian', 'Croatian'], ['bulgarian', 'Bulgarian'], ['lithuanian', 'Lithuanian'], ['latin', 'Latin'],
+  ['maori', 'Maori'], ['malayalam', 'Malayalam'], ['welsh', 'Welsh'], ['slovak', 'Slovak'],
+  ['telugu', 'Telugu'], ['persian', 'Persian'], ['latvian', 'Latvian'], ['bengali', 'Bengali'],
+  ['serbian', 'Serbian'], ['azerbaijani', 'Azerbaijani'], ['slovenian', 'Slovenian'], ['kannada', 'Kannada'],
+  ['estonian', 'Estonian'], ['macedonian', 'Macedonian'], ['breton', 'Breton'], ['basque', 'Basque'],
+  ['icelandic', 'Icelandic'], ['armenian', 'Armenian'], ['swahili', 'Swahili'], ['galician', 'Galician'],
+  ['marathi', 'Marathi'], ['punjabi', 'Punjabi'], ['sinhala', 'Sinhala'], ['khmer', 'Khmer'],
+  ['shona', 'Shona'], ['yoruba', 'Yoruba'], ['somali', 'Somali'], ['afrikaans', 'Afrikaans'],
+  ['occitan', 'Occitan'], ['georgian', 'Georgian'], ['belarusian', 'Belarusian'], ['tajik', 'Tajik'],
+  ['sindhi', 'Sindhi'], ['gujarati', 'Gujarati'], ['amharic', 'Amharic'], ['yiddish', 'Yiddish'],
+  ['lao', 'Lao'], ['uzbek', 'Uzbek'], ['faroese', 'Faroese'], ['haitian creole', 'Haitian Creole'],
+  ['pashto', 'Pashto'], ['turkmen', 'Turkmen'], ['nynorsk', 'Norwegian Nynorsk'], ['maltese', 'Maltese'],
+  ['sanskrit', 'Sanskrit'], ['luxembourgish', 'Luxembourgish'], ['myanmar', 'Myanmar'], ['tibetan', 'Tibetan'],
+  ['tagalog', 'Filipino'], ['malagasy', 'Malagasy'], ['assamese', 'Assamese'], ['tatar', 'Tatar'],
+  ['hawaiian', 'Hawaiian'], ['lingala', 'Lingala'], ['hausa', 'Hausa'], ['bashkir', 'Bashkir'],
+  ['javanese', 'Javanese'], ['sundanese', 'Sundanese'], ['cantonese', 'Cantonese'],
+];
+LANGUAGE_OPTIONS.sort((left, right) => left[1].localeCompare(right[1]));
+const SUPPORTED_LANGUAGES = new Set(['auto', ...LANGUAGE_OPTIONS.map(([value]) => value)]);
 const HIGHLIGHT_MODEL_ID = 'onnx-community/mms-300m-1130-forced-aligner-ONNX';
-const USE_CTC_HIGHLIGHT_ALIGNMENT = true;
+// Loading a second neural model alongside Whisper can exhaust browser memory.
+// Whisper timestamps remain available when this optional aligner is disabled.
+const USE_CTC_HIGHLIGHT_ALIGNMENT = false;
 const MODEL_PROFILES = {
   default: { label: 'Whisper Base', model: 'Xenova/whisper-base', downloadSize: 'about 75 MB' },
   medium: { label: 'Whisper Small', model: 'Xenova/whisper-small', downloadSize: 'about 150 MB' },
@@ -470,18 +506,43 @@ const confirmModelLazyLoad = (modelId) => {
   return confirmed;
 };
 
-const TRANSCRIPTION_OPTIONS = {
-  return_timestamps: 'word',
-  generate_kwargs: {
-    task: 'transcribe',
-    condition_on_prev_tokens: false,
-    suppress_tokens: [-1],
-  },
+const getSelectedLanguage = () => {
+  try {
+    const storedLanguage = localStorage.getItem(LANGUAGE_STORAGE_KEY);
+    return SUPPORTED_LANGUAGES.has(storedLanguage) ? storedLanguage : DEFAULT_LANGUAGE;
+  } catch (error) {
+    return DEFAULT_LANGUAGE;
+  }
+};
+
+const getAutoTranslate = () => {
+  try {
+    return localStorage.getItem(TRANSLATE_STORAGE_KEY) !== 'false';
+  } catch (error) {
+    return true;
+  }
+};
+
+const getTranscriptionOptions = () => {
+  const language = getSelectedLanguage();
+  const translateToEnglish = getAutoTranslate();
+  return {
+    // Word-level timestamps make Whisper translation dramatically slower in-browser.
+    // Translated output uses evenly distributed fallback timings for highlighting.
+    return_timestamps: translateToEnglish ? false : 'word',
+    task: translateToEnglish ? 'translate' : 'transcribe',
+    ...(language !== DEFAULT_LANGUAGE ? { language } : {}),
+    generate_kwargs: {
+      condition_on_prev_tokens: false,
+      suppress_tokens: [-1],
+    },
+  };
 };
 
 const transcribeAudioChunk = async (audio, pipelineInstance) => {
+  const transcriptionOptions = getTranscriptionOptions();
   try {
-    return await pipelineInstance(audio, TRANSCRIPTION_OPTIONS);
+    return await pipelineInstance(audio, transcriptionOptions);
   } catch (error) {
     const message = error?.message || String(error);
     const lacksCrossAttention = message.includes('cross attentions') || message.includes('output_attentions=True');
@@ -491,7 +552,7 @@ const transcribeAudioChunk = async (audio, pipelineInstance) => {
       modelStatus.textContent = 'This quantized model does not provide word timestamps; retrying transcription without timestamps.';
     }
     return pipelineInstance(audio, {
-      ...TRANSCRIPTION_OPTIONS,
+      ...transcriptionOptions,
       return_timestamps: false,
     });
   }
@@ -1551,6 +1612,45 @@ if (modelSelect) {
   });
 }
 
+if (languageSelect) {
+  languageSelect.innerHTML = '<option value="auto">Auto Detect</option>';
+  LANGUAGE_OPTIONS.forEach(([value, label]) => {
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = label;
+    languageSelect.appendChild(option);
+  });
+  languageSelect.value = getSelectedLanguage();
+  languageStatus.textContent = `Language: ${languageSelect.options[languageSelect.selectedIndex].text}. ${LANGUAGE_OPTIONS.length} languages available.`;
+  languageSelect.addEventListener('change', (event) => {
+    const language = SUPPORTED_LANGUAGES.has(event.target.value) ? event.target.value : DEFAULT_LANGUAGE;
+    try {
+      localStorage.setItem(LANGUAGE_STORAGE_KEY, language);
+    } catch (error) {
+      console.warn('Unable to save language selection:', error);
+    }
+    languageSelect.value = language;
+    languageStatus.textContent = `Language: ${languageSelect.options[languageSelect.selectedIndex].text}. ${LANGUAGE_OPTIONS.length} languages available.`;
+    const languageLabel = languageSelect.options[languageSelect.selectedIndex].text;
+    statusEl.textContent = `${languageLabel} selected. Choose Transcribe to apply it.`;
+  });
+}
+
+if (autoTranslateToggle) {
+  autoTranslateToggle.checked = getAutoTranslate();
+  autoTranslateToggle.addEventListener('change', (event) => {
+    const shouldTranslate = event.target.checked;
+    try {
+      localStorage.setItem(TRANSLATE_STORAGE_KEY, String(shouldTranslate));
+    } catch (error) {
+      console.warn('Unable to save translation preference:', error);
+    }
+    statusEl.textContent = shouldTranslate
+      ? 'Translate to English is on. Choose Transcribe to apply it.'
+      : 'Translation is off. The transcript will stay in the spoken language.';
+  });
+}
+
 const customizeToggle = document.getElementById('customizeToggle');
 if (customizeToggle) {
   customizeToggle.addEventListener('click', toggleCustomizationPanel);
@@ -1641,6 +1741,8 @@ const getPreferredDevice = () => {
   return 'wasm';
 };
 
+const isSessionAllocationError = (error) => /bad_alloc|can't create a session|cannot create a session|out of memory/i.test(error?.message || String(error));
+
 audioPlayer.addEventListener('timeupdate', queueTranscriptHighlightUpdate);
 audioPlayer.addEventListener('seeked', queueTranscriptHighlightUpdate);
 audioPlayer.addEventListener('play', startHighlightSyncLoop);
@@ -1700,13 +1802,15 @@ transcribeBtn.addEventListener('click', async () => {
   audioInput.disabled = true;
   const modelId = getSelectedModelId();
   const modelProfile = getModelProfile(modelId);
-  const device = getPreferredDevice();
+  const translateToEnglish = getAutoTranslate();
+  const transcriptionModeLabel = translateToEnglish ? 'translating to English' : 'preserving the spoken language';
+  let device = getPreferredDevice();
   const modelAlreadyLoaded = asrPipeline && loadedModelId === modelId;
   if (!modelAlreadyLoaded && !confirmModelLazyLoad(modelId)) {
     statusEl.textContent = `${modelProfile.label} was not loaded.`;
     return;
   }
-  statusEl.textContent = `Loading ${modelProfile.label} on ${device.toUpperCase()} and preparing transcription...`;
+  statusEl.textContent = `Loading ${modelProfile.label} on ${device.toUpperCase()}, ${transcriptionModeLabel}...`;
   showProgress('Preparing audio', 'Decoding file…', 10);
 
   try {
@@ -1714,13 +1818,23 @@ transcribeBtn.addEventListener('click', async () => {
     const isLargeFile = currentFile.size > LARGE_FILE_STREAM_THRESHOLD;
     const isLargeMp3 = isLargeFile && isMp3File(currentFile);
     const useStreamDecode = isLargeFile && !isLargeMp3;
-    const audioPromise = useStreamDecode
-      ? Promise.resolve(null)
-      : currentRawAudio ? Promise.resolve(currentRawAudio) : (currentAudioDataPromise || prepareAudio(currentFile));
-    const modelPromise = asrPipeline && loadedModelId === modelId
-      ? Promise.resolve(asrPipeline)
-      : preloadPipeline(device, modelId);
-    const [rawAudio, pipelineInstance] = await Promise.all([audioPromise, modelPromise]);
+    let pipelineInstance;
+    try {
+      pipelineInstance = asrPipeline && loadedModelId === modelId
+        ? asrPipeline
+        : await preloadPipeline(device, modelId);
+    } catch (modelError) {
+      if (device !== 'webgpu' || !isSessionAllocationError(modelError)) throw modelError;
+      device = 'wasm';
+      statusEl.textContent = `WebGPU could not allocate ${modelProfile.label}; retrying on CPU...`;
+      pipelineInstance = await preloadPipeline(device, modelId);
+    }
+
+    // Decode only after the model has a session. This prevents the decoded PCM
+    // buffer and ONNX runtime buffers from competing for memory during startup.
+    const rawAudio = useStreamDecode
+      ? null
+      : currentRawAudio || await (currentAudioDataPromise || prepareAudio(currentFile));
     asrPipeline = pipelineInstance;
     loadedModelId = modelId;
     modelStatus.textContent = `Active model: ${modelProfile.label}. Cached in this browser.`;
@@ -1762,13 +1876,7 @@ transcribeBtn.addEventListener('click', async () => {
           });
         }
 
-        try {
-          await asrPipeline(new Float32Array(16000));
-        } catch (e) {
-          // ignore warmup errors
-        }
-
-        const concurrency = Math.min(3, Math.max(1, Math.ceil(navigator.hardwareConcurrency ? navigator.hardwareConcurrency / 4 : 2)));
+        const concurrency = 1;
         const results = new Array(chunks.length);
         let cursor = 0;
 
@@ -1849,9 +1957,10 @@ transcribeBtn.addEventListener('click', async () => {
     lastTranscriptionElapsed = performance.now() - transcriptionStartTime;
     lastAudioDuration = Number.isFinite(audioPlayer.duration) ? audioPlayer.duration : null;
     updateDebugInfo();
-    statusEl.textContent = ctcAlignmentApplied
-      ? 'Transcription complete. CTC word alignment applied.'
-      : 'Transcription complete. Whisper word timings used as fallback.';
+    const timingStatus = ctcAlignmentApplied
+      ? 'CTC word alignment applied.'
+      : 'Whisper word timings used as fallback.';
+    statusEl.textContent = `Transcription complete, ${transcriptionModeLabel}. ${timingStatus}`;
     showProgress('Complete', 'Done', 100);
   } catch (error) {
     console.error(error);
