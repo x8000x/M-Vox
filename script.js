@@ -17,13 +17,29 @@ import { pipeline, AutoModelForCTC, AutoProcessor, AutoTokenizer } from 'https:/
 // -----------------------------------------------------------------------------
 
 const audioInput = document.getElementById('audioInput');
+const selectedFileName = document.getElementById('selectedFileName');
+const audioDropZone = document.getElementById('audioDropZone');
 const transcribeBtn = document.getElementById('transcribeBtn');
 const statusEl = document.getElementById('status');
 const debugInfo = document.getElementById('debugInfo');
 const transcriptEl = document.getElementById('transcript');
+const transcriptLoading = document.getElementById('transcriptLoading');
 const clearBtn = document.getElementById('clearBtn');
 const downloadBtn = document.getElementById('downloadBtn');
 const audioPlayer = document.getElementById('audioPlayer');
+const rewindBtn = document.getElementById('rewindBtn');
+const forwardBtn = document.getElementById('forwardBtn');
+const playPauseBtn = document.getElementById('playPauseBtn');
+const playPauseIcon = document.getElementById('playPauseIcon');
+const playbackCurrentTime = document.getElementById('playbackCurrentTime');
+const playbackDuration = document.getElementById('playbackDuration');
+const seekSlider = document.getElementById('seekSlider');
+const playbackRateToggle = document.getElementById('playbackRateToggle');
+const playbackRateValue = document.getElementById('playbackRateValue');
+const playbackRateMenu = document.getElementById('playbackRateMenu');
+const volumeToggle = document.getElementById('volumeToggle');
+const volumeIcon = document.getElementById('volumeIcon');
+const volumeSlider = document.getElementById('volumeSlider');
 const progressContainer = document.getElementById('progressContainer');
 const progressLabel = document.getElementById('progressLabel');
 const progressState = document.getElementById('progressState');
@@ -33,12 +49,14 @@ const modelStatus = document.getElementById('modelStatus');
 const languageSelect = document.getElementById('languageSelect');
 const languageStatus = document.getElementById('languageStatus');
 const autoTranslateToggle = document.getElementById('autoTranslateToggle');
+const showTimestampsToggle = document.getElementById('showTimestampsToggle');
 const modelDownloadDebug = document.getElementById('modelDownloadDebug');
 const modelDownloadName = document.getElementById('modelDownloadName');
 const modelDownloadedSize = document.getElementById('modelDownloadedSize');
 const modelRemainingSize = document.getElementById('modelRemainingSize');
 const modelDownloadBar = document.getElementById('modelDownloadBar');
 const modelDownloadState = document.getElementById('modelDownloadState');
+const ctcHighlightToggle = document.getElementById('ctcHighlightToggle');
 
 // -----------------------------------------------------------------------------
 // DOM references and live app state
@@ -50,6 +68,7 @@ const modelDownloadState = document.getElementById('modelDownloadState');
 // -----------------------------------------------------------------------------
 let asrPipeline = null;
 let currentFile = null;
+let audioPlayerObjectUrl = null;
 let audioContext = null;
 let currentTranscript = '';
 let currentAudioDataPromise = null;
@@ -82,8 +101,11 @@ const modelDownloadFiles = new Map();
 // -----------------------------------------------------------------------------
 const STORAGE_KEY = 'transcriber-personalization';
 const MODEL_STORAGE_KEY = 'transcriber-model-selection';
+const MODEL_DOWNLOAD_SIZE_STORAGE_KEY = 'transcriber-model-download-sizes';
 const LANGUAGE_STORAGE_KEY = 'transcriber-language-selection';
 const TRANSLATE_STORAGE_KEY = 'transcriber-translate-to-english';
+const TIMESTAMPS_STORAGE_KEY = 'transcriber-show-timestamps';
+const CTC_HIGHLIGHT_STORAGE_KEY = 'transcriber-ctc-highlight';
 const DEFAULT_MODEL_ID = 'default';
 const DEFAULT_LANGUAGE = 'auto';
 const LANGUAGE_OPTIONS = [
@@ -115,14 +137,11 @@ const LANGUAGE_OPTIONS = [
 LANGUAGE_OPTIONS.sort((left, right) => left[1].localeCompare(right[1]));
 const SUPPORTED_LANGUAGES = new Set(['auto', ...LANGUAGE_OPTIONS.map(([value]) => value)]);
 const HIGHLIGHT_MODEL_ID = 'onnx-community/mms-300m-1130-forced-aligner-ONNX';
-// Loading a second neural model alongside Whisper can exhaust browser memory.
-// Whisper timestamps remain available when this optional aligner is disabled.
-const USE_CTC_HIGHLIGHT_ALIGNMENT = false;
 const MODEL_PROFILES = {
-  default: { label: 'Whisper Base', model: 'Xenova/whisper-base', downloadSize: 'about 75 MB' },
-  medium: { label: 'Whisper Small', model: 'Xenova/whisper-small', downloadSize: 'about 150 MB' },
-  highLite: { label: 'Whisper Large V3 Turbo (q4)', model: 'onnx-community/whisper-large-v3-turbo', dtype: 'q4', downloadSize: 'about 800 MB' },
-  high: { label: 'Whisper Large V3 (q4)', model: 'onnx-community/whisper-large-v3-ONNX', dtype: 'q4', downloadSize: 'about 1.5 GB' },
+  default: { label: 'Fast · M-Vox', model: 'Xenova/whisper-base', dtype: 'q4', downloadSize: '265 MB' },
+  medium: { label: 'Balance · M-Vox', model: 'Xenova/whisper-small', dtype: 'q4', downloadSize: '604 MB' },
+  highLite: { label: 'High · M-Vox', model: 'onnx-community/whisper-large-v3-turbo', dtype: 'q4', downloadSize: '1.52 GB' },
+  high: { label: 'Max · M-Vox', model: 'onnx-community/whisper-large-v3-ONNX', dtype: 'q4', downloadSize: '2.45 GB' },
 };
 const HIGHLIGHT_MODEL_PROFILE = {
   label: 'MMS CTC forced aligner (q8)',
@@ -130,6 +149,14 @@ const HIGHLIGHT_MODEL_PROFILE = {
   dtype: 'q8',
   downloadSize: 'about 340 MB',
 };
+const MODEL_DOWNLOAD_SIZE_CACHE = (() => {
+  try {
+    const stored = JSON.parse(localStorage.getItem(MODEL_DOWNLOAD_SIZE_STORAGE_KEY) || '{}');
+    return stored && typeof stored === 'object' && !Array.isArray(stored) ? stored : {};
+  } catch (error) {
+    return {};
+  }
+})();
 const DEFAULT_PREFERENCES = { theme: 'blue', fontSize: 'medium', fontFamily: 'Inter' };
 const THEME_PRESETS = {
   blue: {
@@ -144,6 +171,8 @@ const THEME_PRESETS = {
     accent: '#38bdf8',
     accentHover: '#0ea5e9',
     accentContrast: '#082f49',
+    headerIconColor: '#082f49',
+    brandLogo: 'icons/M-vox_logo_light.png',
     buttonBg: '#124367',
     buttonText: '#f8fbff',
     highlightBg: 'rgba(125, 211, 252, 0.95)',
@@ -164,6 +193,8 @@ const THEME_PRESETS = {
     accent: '#c55a8e',
     accentHover: '#f0d1df',
     accentContrast: '#020001',
+    headerIconColor: '#fff7ed',
+    brandLogo: 'icons/M-vox_logo.jpg',
     buttonBg: '#cc557d',
     buttonText: '#2a0718',
     highlightBg: 'rgba(217, 70, 143, 0.78)',
@@ -184,6 +215,8 @@ const THEME_PRESETS = {
     accent: '#a25712',
     accentHover: '#fad8bc',
     accentContrast: '#241307',
+    headerIconColor: '#fff7ed',
+    brandLogo: 'icons/M-vox_logo.jpg',
     buttonBg: '#e9d3a8',
     buttonText: '#241307',
     highlightBg: 'rgba(162, 87, 18, 0.76)',
@@ -204,6 +237,8 @@ const THEME_PRESETS = {
     accent: '#4ade80',
     accentHover: '#22c55e',
     accentContrast: '#052e16',
+    headerIconColor: '#052e16',
+    brandLogo: 'icons/M-vox_logo_light.png',
     buttonBg: '#1f6d45',
     buttonText: '#f0fdf4',
     highlightBg: 'rgba(187, 247, 208, 0.95)',
@@ -224,6 +259,8 @@ const THEME_PRESETS = {
     accent: '#f59e0b',
     accentHover: '#d97706',
     accentContrast: '#111827',
+    headerIconColor: '#111827',
+    brandLogo: 'icons/M-vox_logo_light.png',
     buttonBg: '#111827',
     buttonText: '#f9fafb',
     highlightBg: 'rgba(245, 158, 11, 0.95)',
@@ -273,6 +310,10 @@ const applyPersonalization = () => {
   const size = FONT_SIZES[personalization.fontSize] || FONT_SIZES.medium;
   const fontFamily = FONT_FAMILIES[personalization.fontFamily] || FONT_FAMILIES.Inter;
   const root = document.documentElement;
+  const brandLogo = document.querySelector('.app-brand-logo');
+
+  document.body.dataset.theme = personalization.theme;
+  if (brandLogo) brandLogo.src = theme.brandLogo || 'icons/M-vox_logo.jpg';
 
   root.style.setProperty('--page-bg', theme.pageBg);
   root.style.setProperty('--surface-1', theme.surface1);
@@ -285,6 +326,7 @@ const applyPersonalization = () => {
   root.style.setProperty('--accent', theme.accent);
   root.style.setProperty('--accent-hover', theme.accentHover);
   root.style.setProperty('--accent-contrast', theme.accentContrast);
+  root.style.setProperty('--header-icon-color', theme.headerIconColor);
   root.style.setProperty('--button-bg', theme.buttonBg);
   root.style.setProperty('--button-text', theme.buttonText);
   root.style.setProperty('--highlight-bg', theme.highlightBg);
@@ -298,6 +340,26 @@ const applyPersonalization = () => {
 
   document.body.style.fontFamily = fontFamily;
   document.body.style.fontSize = size.base;
+
+  const transcribeButton = document.getElementById('transcribeBtn');
+  const closeSettingsButton = document.getElementById('closeCustomizeModal');
+  if (personalization.theme === 'yellow') {
+    transcribeButton?.style.setProperty('color', '#fff7ed', 'important');
+    transcribeButton?.style.setProperty('background-color', theme.accent, 'important');
+    closeSettingsButton?.style.setProperty('background-color', theme.surface3, 'important');
+  } else if (personalization.theme === 'pink') {
+    transcribeButton?.style.setProperty('color', '#fff7ed', 'important');
+    transcribeButton?.style.removeProperty('background-color');
+    closeSettingsButton?.style.setProperty('background-color', theme.surface3, 'important');
+    closeSettingsButton?.style.setProperty('color', theme.textPrimary, 'important');
+    closeSettingsButton?.style.setProperty('border-color', theme.borderColor, 'important');
+  } else {
+    transcribeButton?.style.removeProperty('color');
+    transcribeButton?.style.removeProperty('background-color');
+    closeSettingsButton?.style.removeProperty('background-color');
+    closeSettingsButton?.style.removeProperty('color');
+    closeSettingsButton?.style.removeProperty('border-color');
+  }
 
   document.querySelectorAll('.transcript-word.highlight-current').forEach((element) => {
     element.style.color = theme.highlightText;
@@ -330,11 +392,11 @@ const applyPersonalization = () => {
 };
 
 const toggleCustomizationPanel = () => {
-  const panel = document.getElementById('customizePanel');
+  const modal = document.getElementById('customizeModal');
   const toggle = document.getElementById('customizeToggle');
-  if (!panel || !toggle) return;
-  const isHidden = panel.classList.toggle('hidden');
-  toggle.setAttribute('aria-expanded', String(!isHidden));
+  if (!modal || !toggle || modal.open) return;
+  modal.showModal();
+  toggle.setAttribute('aria-expanded', 'true');
 };
 
 // -----------------------------------------------------------------------------
@@ -342,10 +404,16 @@ const toggleCustomizationPanel = () => {
 // These small helpers keep the interface responsive. They update loading bars,
 // show helpful messages, and display error popups when something goes wrong.
 // -----------------------------------------------------------------------------
-const errorModal = document.getElementById('errorModal');
-const errorMessage = document.getElementById('errorMessage');
-const closeErrorModal = document.getElementById('closeErrorModal');
-const retryErrorBtn = document.getElementById('retryErrorBtn');
+const appDialog = document.getElementById('appDialog');
+const appDialogIcon = document.getElementById('appDialogIcon');
+const appDialogTitle = document.getElementById('appDialogTitle');
+const appDialogMessage = document.getElementById('appDialogMessage');
+const appDialogDetails = document.getElementById('appDialogDetails');
+const appDialogDetailsText = document.getElementById('appDialogDetailsText');
+const appDialogClose = document.getElementById('appDialogClose');
+const appDialogCancel = document.getElementById('appDialogCancel');
+const appDialogConfirm = document.getElementById('appDialogConfirm');
+let appDialogResolve = null;
 const infoToggle = document.getElementById('infoToggle');
 const infoModal = document.getElementById('infoModal');
 const closeInfoModal = document.getElementById('closeInfoModal');
@@ -367,6 +435,51 @@ infoModal.addEventListener('click', (event) => {
 });
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape' && !infoModal.classList.contains('hidden')) closeInfoDialog();
+});
+
+const APP_DIALOG_ICONS = {
+  info: 'fa-circle-info',
+  confirm: 'fa-circle-question',
+  error: 'fa-triangle-exclamation',
+};
+
+const showAppDialog = ({
+  variant = 'info',
+  title = 'Notice',
+  message = '',
+  details = '',
+  primaryLabel = 'Got it',
+  secondaryLabel = '',
+} = {}) => {
+  if (appDialog.open) return Promise.resolve(false);
+  appDialog.dataset.variant = variant;
+  appDialogIcon.className = `app-dialog-icon fa-solid ${APP_DIALOG_ICONS[variant] || APP_DIALOG_ICONS.info}`;
+  appDialogTitle.textContent = title;
+  appDialogMessage.textContent = message;
+  appDialogDetailsText.textContent = details;
+  appDialogDetails.hidden = !details;
+  appDialogCancel.hidden = !secondaryLabel;
+  appDialogCancel.textContent = secondaryLabel || 'Cancel';
+  appDialogConfirm.textContent = primaryLabel;
+  appDialog.returnValue = '';
+
+  return new Promise((resolve) => {
+    appDialogResolve = resolve;
+    appDialog.showModal();
+    appDialogConfirm.focus();
+  });
+};
+
+appDialogConfirm.addEventListener('click', () => appDialog.close('confirm'));
+appDialogCancel.addEventListener('click', () => appDialog.close('cancel'));
+appDialogClose.addEventListener('click', () => appDialog.close('cancel'));
+appDialog.addEventListener('click', (event) => {
+  if (event.target === appDialog) appDialog.close('cancel');
+});
+appDialog.addEventListener('close', () => {
+  const resolve = appDialogResolve;
+  appDialogResolve = null;
+  resolve?.(appDialog.returnValue === 'confirm');
 });
 
 const showProgress = (label, state, percent = 0) => {
@@ -393,6 +506,48 @@ const formatTime = (seconds) => {
   if (minutes) parts.push(`${minutes}m`);
   parts.push(`${secs}s`);
   return parts.join(' ');
+};
+
+const formatPlaybackTime = (seconds) => {
+  if (!Number.isFinite(seconds) || seconds < 0) return '00:00';
+  const wholeSeconds = Math.floor(seconds);
+  const secondsPart = String(wholeSeconds % 60).padStart(2, '0');
+  const minutes = Math.floor(wholeSeconds / 60);
+  if (minutes >= 60) {
+    return `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, '0')}:${secondsPart}`;
+  }
+  return `${String(minutes).padStart(2, '0')}:${secondsPart}`;
+};
+
+const updatePlayPauseButton = () => {
+  const isPlaying = !audioPlayer.paused && !audioPlayer.ended;
+  playPauseIcon.className = isPlaying ? 'fa-solid fa-pause' : 'fa-solid fa-play';
+  playPauseBtn.setAttribute('aria-label', isPlaying ? 'Pause audio' : 'Play audio');
+  playPauseBtn.title = isPlaying ? 'Pause audio' : 'Play audio';
+};
+
+const updateMediaControls = () => {
+  const duration = Number.isFinite(audioPlayer.duration) ? audioPlayer.duration : 0;
+  const currentTime = Number.isFinite(audioPlayer.currentTime) ? audioPlayer.currentTime : 0;
+  const hasDuration = duration > 0;
+  playbackCurrentTime.textContent = formatPlaybackTime(currentTime);
+  playbackDuration.textContent = formatPlaybackTime(duration);
+  seekSlider.max = String(Math.max(duration, 1));
+  seekSlider.value = String(Math.min(currentTime, duration));
+  seekSlider.style.setProperty('--range-progress', `${hasDuration ? (currentTime / duration) * 100 : 0}%`);
+  seekSlider.disabled = !hasDuration;
+  playPauseBtn.disabled = !hasDuration;
+  volumeToggle.disabled = false;
+  volumeSlider.disabled = false;
+  volumeSlider.value = String(audioPlayer.volume);
+  volumeSlider.style.setProperty('--range-progress', `${audioPlayer.volume * 100}%`);
+  volumeIcon.className = audioPlayer.muted || audioPlayer.volume === 0
+    ? 'fa-solid fa-volume-xmark'
+    : 'fa-solid fa-volume-high';
+  volumeToggle.setAttribute('aria-pressed', String(audioPlayer.muted || audioPlayer.volume === 0));
+  volumeToggle.setAttribute('aria-label', audioPlayer.muted ? 'Unmute audio' : 'Mute audio');
+  volumeToggle.title = audioPlayer.muted ? 'Unmute audio' : 'Mute audio';
+  updatePlayPauseButton();
 };
 
 const updateDebugInfo = () => {
@@ -477,12 +632,57 @@ const getModelProfile = (modelId = getSelectedModelId()) => modelId === HIGHLIGH
   ? HIGHLIGHT_MODEL_PROFILE
   : MODEL_PROFILES[modelId] || MODEL_PROFILES[DEFAULT_MODEL_ID];
 
+const getModelDownloadCacheKey = (modelId) => {
+  const profile = getModelProfile(modelId);
+  return `${profile.model}:${profile.dtype || 'default'}`;
+};
+
+const getSavedModelDownloadSize = (modelId) => {
+  const currentSize = Number(MODEL_DOWNLOAD_SIZE_CACHE[getModelDownloadCacheKey(modelId)]);
+  if (Number.isFinite(currentSize) && currentSize > 0) return currentSize;
+  if (modelId === 'medium') return null;
+
+  const legacySize = Number(MODEL_DOWNLOAD_SIZE_CACHE[modelId]);
+  return Number.isFinite(legacySize) && legacySize > 0 ? legacySize : null;
+};
+
 const formatMegabytes = (bytes) => {
   if (!Number.isFinite(bytes)) return 'Unknown';
   const megabytes = bytes / 1_000_000;
   return megabytes >= 1000
     ? `${megabytes.toFixed(1)} MB (${(megabytes / 1000).toFixed(2)} GB)`
     : `${megabytes.toFixed(1)} MB`;
+};
+
+const getModelDownloadSizeDescription = (modelId) => {
+  const actualBytes = getSavedModelDownloadSize(modelId);
+  return actualBytes
+    ? `${formatMegabytes(actualBytes)} downloaded`
+    : `Estimated ${getModelProfile(modelId).downloadSize}`;
+};
+
+let refreshSettingsSelects = () => {};
+
+const updateModelSelectDownloadSizes = () => {
+  if (!modelSelect) return;
+  [...modelSelect.options].forEach((option) => {
+    option.textContent = `${option.dataset.modelLabel || getModelProfile(option.value).label} · ${getModelDownloadSizeDescription(option.value)}`;
+  });
+  refreshSettingsSelects(modelSelect);
+};
+
+const saveActualModelDownloadSize = (modelId) => {
+  const downloadedBytes = [...modelDownloadFiles.values()]
+    .reduce((sum, file) => sum + (file.loaded || 0), 0);
+  if (!Number.isFinite(downloadedBytes) || downloadedBytes <= 0) return;
+
+  MODEL_DOWNLOAD_SIZE_CACHE[getModelDownloadCacheKey(modelId)] = downloadedBytes;
+  try {
+    localStorage.setItem(MODEL_DOWNLOAD_SIZE_STORAGE_KEY, JSON.stringify(MODEL_DOWNLOAD_SIZE_CACHE));
+  } catch (error) {
+    console.warn('Unable to save measured model download sizes:', error);
+  }
+  updateModelSelectDownloadSizes();
 };
 
 const resetModelDownloadDebug = (modelId) => {
@@ -522,7 +722,7 @@ const updateModelDownloadDebug = (progress, modelId) => {
       : `Downloading ${fileName} (${Math.round(percentage)}%) · ${formatMegabytes(downloaded)} downloaded`;
 };
 
-const confirmModelLazyLoad = (modelId) => {
+const confirmModelLazyLoad = async (modelId) => {
   const profile = getModelProfile(modelId);
   const confirmationKey = `transcriber-model-confirmed-${modelId}`;
   try {
@@ -530,9 +730,13 @@ const confirmModelLazyLoad = (modelId) => {
   } catch (error) {
     // Continue with the confirmation if browser storage is unavailable.
   }
-  const confirmed = window.confirm(
-    `Estimated browser download: about ${profile.downloadSize.replace(/^about\s+/i, '')}. The actual total can vary by model files; downloaded bytes will be tracked in Model download details. The model will be cached locally and can use substantial memory. Download and load it now?`,
-  );
+  const confirmed = await showAppDialog({
+    variant: 'confirm',
+    title: `Load ${profile.label}?`,
+    message: `Download size: ${getModelDownloadSizeDescription(modelId)}. The model will be cached locally and can use substantial memory. Download and load it now?`,
+    primaryLabel: 'Download and load',
+    secondaryLabel: 'Cancel',
+  });
   if (confirmed) {
     try {
       sessionStorage.setItem(confirmationKey, 'true');
@@ -560,6 +764,22 @@ const getAutoTranslate = () => {
   }
 };
 
+const getShowTimestamps = () => {
+  try {
+    return localStorage.getItem(TIMESTAMPS_STORAGE_KEY) !== 'false';
+  } catch (error) {
+    return true;
+  }
+};
+
+const getUseCtcHighlightAlignment = () => {
+  try {
+    return localStorage.getItem(CTC_HIGHLIGHT_STORAGE_KEY) === 'true';
+  } catch (error) {
+    return false;
+  }
+};
+
 const getTranscriptionOptions = () => {
   const language = getSelectedLanguage();
   const translateToEnglish = getAutoTranslate();
@@ -578,6 +798,11 @@ const getTranscriptionOptions = () => {
 
 const transcribeAudioChunk = async (audio, pipelineInstance) => {
   const transcriptionOptions = getTranscriptionOptions();
+  if (transcriptionStartTime == null) {
+    transcriptionStartTime = performance.now();
+    elapsedTimerInterval = setInterval(updateDebugInfo, 100);
+    updateDebugInfo();
+  }
   try {
     return await pipelineInstance(audio, transcriptionOptions);
   } catch (error) {
@@ -843,7 +1068,8 @@ const findActiveWordIndex = (currentTime) => {
 };
 
 let highlightFrame = null;
-const SHOW_WORD_TIMESTAMPS = true;
+let showWordTimestamps = getShowTimestamps();
+let useCtcHighlightAlignment = getUseCtcHighlightAlignment();
 let lastHighlightDebugIndex = -1;
 
 const formatWordTimestamp = (milliseconds) => {
@@ -853,6 +1079,15 @@ const formatWordTimestamp = (milliseconds) => {
   const seconds = Math.floor(totalSeconds % 60);
   const millis = Math.floor(milliseconds % 1000).toString().padStart(3, '0');
   return `(${minutes}:${seconds.toString().padStart(2, '0')}.${millis})`;
+};
+
+const updateTranscriptTimestampDisplay = () => {
+  transcriptWords.forEach((entry) => {
+    const timestampPrefix = showWordTimestamps && entry.startTimeMs != null
+      ? `${formatWordTimestamp(entry.startTimeMs)} `
+      : '';
+    entry.element.textContent = `${timestampPrefix}${entry.text}`;
+  });
 };
 
 const updateTranscriptHighlights = () => {
@@ -973,12 +1208,7 @@ const renderTranscript = (text, duration, wordTimings = []) => {
   transcriptEl.innerHTML = '';
   transcriptEl.appendChild(fragment);
   setTranscriptWordsTiming(duration, currentTranscriptWordTimings);
-  transcriptWords.forEach((entry) => {
-    const timestampPrefix = SHOW_WORD_TIMESTAMPS && entry.startTimeMs != null
-      ? `${formatWordTimestamp(entry.startTimeMs)} `
-      : '';
-    entry.element.textContent = `${timestampPrefix}${entry.text}`;
-  });
+  updateTranscriptTimestampDisplay();
   updateTranscriptHighlights();
 };
 
@@ -1284,7 +1514,7 @@ const preloadPipeline = async (device, modelId = getSelectedModelId()) => {
     });
     let timeoutId;
     const timeoutPromise = new Promise((resolve, reject) => {
-      timeoutId = setTimeout(() => reject(new Error(`${profile.label} did not finish initializing within 5 minutes. This browser may not have enough WebGPU memory. Try Whisper Small or Base.`)), 5 * 60 * 1000);
+      timeoutId = setTimeout(() => reject(new Error(`${profile.label} did not finish initializing within 5 minutes. This browser may not have enough WebGPU memory. Try Fast or Balance.`)), 5 * 60 * 1000);
     });
     preloadPipelinePromise = Promise.race([loadPromise, timeoutPromise])
       .finally(() => clearTimeout(timeoutId))
@@ -1296,6 +1526,7 @@ const preloadPipeline = async (device, modelId = getSelectedModelId()) => {
         modelDownloadBar.parentElement.classList.remove('hidden');
         modelDownloadBar.style.width = '100%';
         const downloadedBytes = [...modelDownloadFiles.values()].reduce((sum, file) => sum + (file.loaded || 0), 0);
+        saveActualModelDownloadSize(modelId);
         const downloadedSummary = downloadedBytes > 0 ? ` Downloaded ${formatMegabytes(downloadedBytes)} this session.` : '';
         modelDownloadState.textContent = `Model initialized and ready.${downloadedSummary} Files are cached by Transformers.js.`;
         return loadedPipeline;
@@ -1334,6 +1565,7 @@ const preloadHighlightModel = async (device) => {
       highlightProcessor = processor;
       highlightTokenizer = tokenizer;
       highlightModel = model;
+      saveActualModelDownloadSize(HIGHLIGHT_MODEL_ID);
       modelDownloadBar.style.width = '100%';
       modelDownloadState.textContent = 'Highlight model initialized and ready. Files are cached by Transformers.js.';
       return { processor, model };
@@ -1624,15 +1856,25 @@ personalization = getStoredPreferences();
 applyPersonalization();
 
 if (modelSelect) {
+  updateModelSelectDownloadSizes();
   modelSelect.value = getSelectedModelId();
   modelStatus.textContent = `Selected model: ${getModelProfile().label}`;
-  modelSelect.addEventListener('change', (event) => {
+  modelSelect.addEventListener('change', async (event) => {
     const nextModelId = event.target.value;
     const nextProfile = getModelProfile(nextModelId);
     if (nextModelId !== getSelectedModelId()) {
-      const confirmed = window.confirm(`${nextProfile.label} is a large browser download and may use substantial memory. Switch models? The current model will be unloaded.`);
+      modelSelect.disabled = true;
+      const confirmed = await showAppDialog({
+        variant: 'confirm',
+        title: `Switch to ${nextProfile.label}?`,
+        message: `Download size: ${getModelDownloadSizeDescription(nextModelId)}. This model may use substantial memory, and the current model will be unloaded when you switch.`,
+        primaryLabel: 'Switch model',
+        secondaryLabel: 'Cancel',
+      });
+      modelSelect.disabled = false;
       if (!confirmed) {
         modelSelect.value = getSelectedModelId();
+        refreshSettingsSelects(modelSelect);
         return;
       }
       if (asrPipeline && loadedModelId !== nextModelId) {
@@ -1691,9 +1933,49 @@ if (autoTranslateToggle) {
   });
 }
 
+if (showTimestampsToggle) {
+  showTimestampsToggle.checked = showWordTimestamps;
+  showTimestampsToggle.addEventListener('change', (event) => {
+    showWordTimestamps = event.target.checked;
+    try {
+      localStorage.setItem(TIMESTAMPS_STORAGE_KEY, String(showWordTimestamps));
+    } catch (error) {
+      console.warn('Unable to save timestamp preference:', error);
+    }
+    updateTranscriptTimestampDisplay();
+  });
+}
+
+if (ctcHighlightToggle) {
+  ctcHighlightToggle.checked = useCtcHighlightAlignment;
+  ctcHighlightToggle.addEventListener('change', (event) => {
+    useCtcHighlightAlignment = event.target.checked;
+    try {
+      localStorage.setItem(CTC_HIGHLIGHT_STORAGE_KEY, String(useCtcHighlightAlignment));
+    } catch (error) {
+      console.warn('Unable to save CTC highlighting preference:', error);
+    }
+    statusEl.textContent = useCtcHighlightAlignment
+      ? 'Accurate CTC highlighting is on. Transcription will be slower and may download an additional model before it starts.'
+      : 'Default M-Vox highlighting is on.';
+  });
+}
+
 const customizeToggle = document.getElementById('customizeToggle');
+const customizeModal = document.getElementById('customizeModal');
+const closeCustomizeModal = document.getElementById('closeCustomizeModal');
 if (customizeToggle) {
   customizeToggle.addEventListener('click', toggleCustomizationPanel);
+}
+if (closeCustomizeModal && customizeModal) {
+  closeCustomizeModal.addEventListener('click', () => customizeModal.close());
+  customizeModal.addEventListener('click', (event) => {
+    if (event.target === customizeModal) customizeModal.close();
+  });
+  customizeModal.addEventListener('close', () => {
+    customizeToggle.setAttribute('aria-expanded', 'false');
+    customizeToggle.focus();
+  });
 }
 
 document.querySelectorAll('.theme-option').forEach((button) => {
@@ -1710,6 +1992,29 @@ document.querySelectorAll('.font-size-option').forEach((button) => {
   });
 });
 
+audioDropZone.addEventListener('dragover', (event) => {
+  event.preventDefault();
+  audioDropZone.classList.add('is-dragging');
+});
+
+audioDropZone.addEventListener('dragleave', (event) => {
+  if (!audioDropZone.contains(event.relatedTarget)) {
+    audioDropZone.classList.remove('is-dragging');
+  }
+});
+
+audioDropZone.addEventListener('drop', (event) => {
+  event.preventDefault();
+  audioDropZone.classList.remove('is-dragging');
+  const file = event.dataTransfer?.files?.[0];
+  if (!file) return;
+
+  const transfer = new DataTransfer();
+  transfer.items.add(file);
+  audioInput.files = transfer.files;
+  audioInput.dispatchEvent(new Event('change', { bubbles: true }));
+});
+
 const fontFamilySelect = document.getElementById('fontFamilySelect');
 if (fontFamilySelect) {
   fontFamilySelect.addEventListener('change', (event) => {
@@ -1718,21 +2023,162 @@ if (fontFamilySelect) {
   });
 }
 
+const settingsSelectControls = new Map();
+const syncSettingsSelect = (select) => {
+  const control = settingsSelectControls.get(select);
+  if (!control) return;
+
+  const selectedOption = select.options[select.selectedIndex];
+  control.value.textContent = selectedOption?.textContent || '';
+  control.trigger.disabled = select.disabled;
+  control.trigger.setAttribute('aria-label', `${control.label}: ${selectedOption?.textContent || ''}`);
+  control.menu.replaceChildren(...[...select.options].map((option) => {
+    const optionButton = document.createElement('button');
+    optionButton.type = 'button';
+    optionButton.className = 'settings-select-option';
+    optionButton.textContent = option.textContent;
+    optionButton.dataset.value = option.value;
+    optionButton.setAttribute('role', 'option');
+    optionButton.setAttribute('aria-selected', String(option === selectedOption));
+    optionButton.tabIndex = -1;
+    optionButton.disabled = option.disabled;
+    optionButton.classList.toggle('is-selected', option === selectedOption);
+    return optionButton;
+  }));
+};
+
+const enhanceSettingsSelect = (select) => {
+  const label = select.getAttribute('aria-label') || select.id;
+  const control = document.createElement('div');
+  const trigger = document.createElement('button');
+  const value = document.createElement('span');
+  const icon = document.createElement('i');
+  const menu = document.createElement('div');
+  const menuId = `${select.id}Menu`;
+
+  control.className = 'settings-select-control';
+  trigger.type = 'button';
+  trigger.className = 'settings-select-trigger';
+  trigger.setAttribute('aria-label', label);
+  trigger.setAttribute('aria-haspopup', 'listbox');
+  trigger.setAttribute('aria-expanded', 'false');
+  trigger.setAttribute('aria-controls', menuId);
+  value.className = 'settings-select-value';
+  icon.className = 'fa-solid fa-chevron-down';
+  icon.setAttribute('aria-hidden', 'true');
+  trigger.append(value, icon);
+  menu.id = menuId;
+  menu.className = 'settings-select-menu';
+  menu.setAttribute('role', 'listbox');
+  menu.setAttribute('aria-label', label);
+  menu.hidden = true;
+  select.classList.add('settings-native-select');
+  select.tabIndex = -1;
+  select.hidden = true;
+  select.setAttribute('aria-hidden', 'true');
+  select.replaceWith(control);
+  control.append(select, trigger, menu);
+  settingsSelectControls.set(select, { control, trigger, value, menu, label });
+
+  const closeMenu = (restoreFocus = false) => {
+    menu.hidden = true;
+    trigger.setAttribute('aria-expanded', 'false');
+    if (restoreFocus) trigger.focus();
+  };
+  const openMenu = () => {
+    menu.hidden = false;
+    trigger.setAttribute('aria-expanded', 'true');
+    menu.querySelector('[aria-selected="true"]')?.focus();
+  };
+
+  trigger.addEventListener('click', () => {
+    if (menu.hidden) openMenu();
+    else closeMenu();
+  });
+  trigger.addEventListener('keydown', (event) => {
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      openMenu();
+    }
+  });
+  const associatedLabel = document.querySelector(`label[for="${select.id}"]`);
+  associatedLabel?.addEventListener('click', (event) => {
+    event.preventDefault();
+    trigger.focus();
+  });
+  menu.addEventListener('click', (event) => {
+    const optionButton = event.target.closest('.settings-select-option');
+    if (!optionButton || optionButton.disabled) return;
+    select.value = optionButton.dataset.value;
+    syncSettingsSelect(select);
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+    closeMenu(true);
+  });
+  menu.addEventListener('keydown', (event) => {
+    const options = [...menu.querySelectorAll('.settings-select-option:not(:disabled)')];
+    const currentIndex = options.indexOf(document.activeElement);
+    let nextIndex = currentIndex;
+    if (event.key === 'ArrowDown') nextIndex = (currentIndex + 1) % options.length;
+    else if (event.key === 'ArrowUp') nextIndex = (currentIndex - 1 + options.length) % options.length;
+    else if (event.key === 'Home') nextIndex = 0;
+    else if (event.key === 'End') nextIndex = options.length - 1;
+    else if (event.key === 'Escape') {
+      event.preventDefault();
+      closeMenu(true);
+      return;
+    } else {
+      return;
+    }
+    event.preventDefault();
+    options[nextIndex]?.focus();
+  });
+  select.addEventListener('change', () => syncSettingsSelect(select));
+  syncSettingsSelect(select);
+};
+
+const settingsSelects = [modelSelect, languageSelect, fontFamilySelect].filter(Boolean);
+settingsSelects.forEach(enhanceSettingsSelect);
+refreshSettingsSelects = (selectToRefresh = null) => {
+  if (selectToRefresh) syncSettingsSelect(selectToRefresh);
+  else settingsSelects.forEach(syncSettingsSelect);
+};
+
+document.addEventListener('click', (event) => {
+  settingsSelectControls.forEach(({ control, trigger, menu }) => {
+    if (!control.contains(event.target) && !menu.hidden) {
+      menu.hidden = true;
+      trigger.setAttribute('aria-expanded', 'false');
+    }
+  });
+});
+
 audioInput.addEventListener('change', () => {
   // When the user selects a file, this block updates the current file state and
   // gets the app ready for transcription. It clears old transcript content and
   // prepares the audio in the background so the next button click can begin
   // quickly.
   currentFile = audioInput.files?.[0] ?? null;
+  selectedFileName.textContent = currentFile?.name ?? 'No file chosen';
   currentRawAudio = null;
   currentAudioDataPromise = null;
+  lastAudioDuration = null;
+  rewindBtn.disabled = true;
+  forwardBtn.disabled = true;
+  if (audioPlayerObjectUrl) URL.revokeObjectURL(audioPlayerObjectUrl);
+  audioPlayerObjectUrl = null;
   transcribeBtn.disabled = !currentFile;
   if (currentFile) {
     const isLargeFile = currentFile.size > LARGE_FILE_STREAM_THRESHOLD;
     const isLargeMp3 = isLargeFile && isMp3File(currentFile);
     statusEl.textContent = `Selected file: ${currentFile.name} (${Math.round(currentFile.size / 1024)} KB)`;
     audioPlayer.classList.add('hidden');
-    audioPlayer.src = '';
+    audioPlayer.pause();
+    audioPlayerObjectUrl = URL.createObjectURL(currentFile);
+    audioPlayer.preload = 'metadata';
+    audioPlayer.src = audioPlayerObjectUrl;
+    audioPlayer.load();
+    updateMediaControls();
+    updateDebugInfo();
     clearTranscript();
     downloadBtn.disabled = true;
     if (!isLargeFile || isLargeMp3) {
@@ -1745,6 +2191,11 @@ audioInput.addEventListener('change', () => {
       statusEl.textContent = `Large non-MP3 file selected; streaming decode will be used during transcription.`;
     }
   } else {
+    audioPlayer.classList.add('hidden');
+    audioPlayer.src = '';
+    audioPlayer.load();
+    updateMediaControls();
+    updateDebugInfo();
     statusEl.textContent = 'Please select an audio file to transcribe.';
   }
 });
@@ -1753,11 +2204,21 @@ clearBtn.addEventListener('click', () => {
   clearTranscript();
   statusEl.textContent = 'Transcript cleared. Choose a new audio file to transcribe.';
   audioInput.value = '';
+  selectedFileName.textContent = 'No file chosen';
   currentFile = null;
   transcribeBtn.disabled = true;
   downloadBtn.disabled = true;
   audioPlayer.classList.add('hidden');
+  audioPlayer.pause();
   audioPlayer.src = '';
+  audioPlayer.load();
+  if (audioPlayerObjectUrl) URL.revokeObjectURL(audioPlayerObjectUrl);
+  audioPlayerObjectUrl = null;
+  lastAudioDuration = null;
+  rewindBtn.disabled = true;
+  forwardBtn.disabled = true;
+  updateMediaControls();
+  updateDebugInfo();
   hideProgress();
 });
 
@@ -1783,38 +2244,151 @@ const getPreferredDevice = () => {
 
 const isSessionAllocationError = (error) => /bad_alloc|can't create a session|cannot create a session|out of memory/i.test(error?.message || String(error));
 
-audioPlayer.addEventListener('timeupdate', queueTranscriptHighlightUpdate);
-audioPlayer.addEventListener('seeked', queueTranscriptHighlightUpdate);
-audioPlayer.addEventListener('play', startHighlightSyncLoop);
-audioPlayer.addEventListener('pause', stopHighlightSyncLoop);
-audioPlayer.addEventListener('ended', stopHighlightSyncLoop);
+playPauseBtn.addEventListener('click', () => {
+  if (audioPlayer.paused) {
+    audioPlayer.play().catch((error) => console.warn('Unable to play audio:', error));
+  } else {
+    audioPlayer.pause();
+  }
+});
+
+seekSlider.addEventListener('input', () => {
+  audioPlayer.currentTime = Number(seekSlider.value);
+  updateMediaControls();
+});
+
+const playbackRateOptions = [...playbackRateMenu.querySelectorAll('.media-rate-option')];
+
+const closePlaybackRateMenu = (restoreFocus = false) => {
+  playbackRateMenu.hidden = true;
+  playbackRateToggle.setAttribute('aria-expanded', 'false');
+  if (restoreFocus) playbackRateToggle.focus();
+};
+
+const openPlaybackRateMenu = () => {
+  playbackRateMenu.hidden = false;
+  playbackRateToggle.setAttribute('aria-expanded', 'true');
+  const selectedOption = playbackRateMenu.querySelector('[aria-selected="true"]');
+  selectedOption?.focus();
+};
+
+playbackRateToggle.addEventListener('click', () => {
+  if (playbackRateMenu.hidden) openPlaybackRateMenu();
+  else closePlaybackRateMenu();
+});
+
+playbackRateToggle.addEventListener('keydown', (event) => {
+  if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+    event.preventDefault();
+    openPlaybackRateMenu();
+  }
+});
+
+playbackRateMenu.addEventListener('click', (event) => {
+  const option = event.target.closest('.media-rate-option');
+  if (!option) return;
+  audioPlayer.playbackRate = Number(option.dataset.rate);
+  playbackRateValue.textContent = option.textContent;
+  playbackRateOptions.forEach((rateOption) => {
+    const isSelected = rateOption === option;
+    rateOption.classList.toggle('is-selected', isSelected);
+    rateOption.setAttribute('aria-selected', String(isSelected));
+  });
+  closePlaybackRateMenu(true);
+});
+
+playbackRateMenu.addEventListener('keydown', (event) => {
+  const currentIndex = playbackRateOptions.indexOf(document.activeElement);
+  let nextIndex = currentIndex;
+  if (event.key === 'ArrowDown') nextIndex = (currentIndex + 1) % playbackRateOptions.length;
+  else if (event.key === 'ArrowUp') nextIndex = (currentIndex - 1 + playbackRateOptions.length) % playbackRateOptions.length;
+  else if (event.key === 'Home') nextIndex = 0;
+  else if (event.key === 'End') nextIndex = playbackRateOptions.length - 1;
+  else if (event.key === 'Escape') {
+    event.preventDefault();
+    closePlaybackRateMenu(true);
+    return;
+  } else {
+    return;
+  }
+  event.preventDefault();
+  playbackRateOptions[nextIndex].focus();
+});
+
+document.addEventListener('click', (event) => {
+  if (!event.target.closest('.media-speed-control') && !playbackRateMenu.hidden) {
+    closePlaybackRateMenu();
+  }
+});
+
+volumeToggle.addEventListener('click', () => {
+  audioPlayer.muted = !audioPlayer.muted;
+  updateMediaControls();
+});
+
+volumeSlider.addEventListener('input', () => {
+  audioPlayer.volume = Number(volumeSlider.value);
+  audioPlayer.muted = audioPlayer.volume === 0;
+  updateMediaControls();
+});
+
+audioPlayer.addEventListener('timeupdate', () => {
+  updateMediaControls();
+  queueTranscriptHighlightUpdate();
+});
+audioPlayer.addEventListener('seeked', () => {
+  updateMediaControls();
+  queueTranscriptHighlightUpdate();
+});
+audioPlayer.addEventListener('play', () => {
+  updateMediaControls();
+  startHighlightSyncLoop();
+});
+audioPlayer.addEventListener('pause', () => {
+  updateMediaControls();
+  stopHighlightSyncLoop();
+});
+audioPlayer.addEventListener('ended', () => {
+  updateMediaControls();
+  stopHighlightSyncLoop();
+});
+audioPlayer.addEventListener('volumechange', updateMediaControls);
 audioPlayer.addEventListener('loadedmetadata', () => {
   if (currentTranscriptText) {
     setTranscriptWordsTiming(audioPlayer.duration, currentTranscriptWordTimings);
     updateTranscriptHighlights();
   }
   lastAudioDuration = Number.isFinite(audioPlayer.duration) ? audioPlayer.duration : lastAudioDuration;
+  rewindBtn.disabled = !Number.isFinite(audioPlayer.duration);
+  forwardBtn.disabled = !Number.isFinite(audioPlayer.duration);
+  updateMediaControls();
   updateDebugInfo();
 });
 
-const showErrorModal = (error) => {
+rewindBtn.addEventListener('click', () => {
+  audioPlayer.currentTime = Math.max(0, audioPlayer.currentTime - 10);
+});
+
+forwardBtn.addEventListener('click', () => {
+  const duration = Number.isFinite(audioPlayer.duration) ? audioPlayer.duration : audioPlayer.currentTime + 10;
+  audioPlayer.currentTime = Math.min(duration, audioPlayer.currentTime + 10);
+});
+
+const showErrorModal = (error, retryable = false) => {
   const message = error?.message || error?.toString() || 'Unknown error';
-  const fileInfo = currentFile ? `File: ${currentFile.name} (${Math.round(currentFile.size / 1024 / 1024)} MB)\n\n` : '';
-  const details = error?.stack ? `${fileInfo}${message}\n\n${error.stack}` : `${fileInfo}${message}`;
-  errorMessage.textContent = details;
-  errorModal.classList.remove('hidden');
+  const fileInfo = currentFile ? `File: ${currentFile.name} (${Math.round(currentFile.size / 1024 / 1024)} MB)` : '';
+  const details = [fileInfo, error?.stack].filter(Boolean).join('\n\n');
+  showAppDialog({
+    variant: 'error',
+    title: 'Transcription error',
+    message,
+    details,
+    primaryLabel: retryable && currentFile ? 'Retry' : 'Close',
+    secondaryLabel: retryable && currentFile ? 'Dismiss' : '',
+  }).then((retry) => {
+    if (retry && retryable && currentFile) transcribeBtn.click();
+  });
 };
-
-closeErrorModal.addEventListener('click', () => {
-  errorModal.classList.add('hidden');
-});
-
-retryErrorBtn.addEventListener('click', async () => {
-  errorModal.classList.add('hidden');
-  if (currentFile) {
-    transcribeBtn.click();
-  }
-});
 
 // -----------------------------------------------------------------------------
 // Main transcription workflow
@@ -1839,19 +2413,22 @@ transcribeBtn.addEventListener('click', async () => {
   const transcriptionModeLabel = translateToEnglish ? 'translating to English' : 'preserving the spoken language';
   let device = getPreferredDevice();
   const modelAlreadyLoaded = asrPipeline && loadedModelId === modelId;
-  if (!modelAlreadyLoaded && !confirmModelLazyLoad(modelId)) {
-    statusEl.textContent = `${modelProfile.label} was not loaded.`;
-    return;
+  if (!modelAlreadyLoaded) {
+    const confirmed = await confirmModelLazyLoad(modelId);
+    if (!confirmed) {
+      statusEl.textContent = `${modelProfile.label} was not loaded.`;
+      return;
+    }
   }
-  transcriptionStartTime = performance.now();
-  lastTranscriptionElapsed = null;
-  lastAudioDuration = null;
-  updateDebugInfo();
   clearInterval(elapsedTimerInterval);
-  elapsedTimerInterval = setInterval(updateDebugInfo, 100);
+  elapsedTimerInterval = null;
+  transcriptionStartTime = null;
+  lastTranscriptionElapsed = null;
+  updateDebugInfo();
 
   transcribeBtn.disabled = true;
   audioInput.disabled = true;
+  transcriptLoading.hidden = false;
   statusEl.textContent = `Loading ${modelProfile.label} on ${device.toUpperCase()}, ${transcriptionModeLabel}...`;
   showProgress('Preparing audio', 'Decoding file…', 10);
 
@@ -1880,15 +2457,15 @@ transcribeBtn.addEventListener('click', async () => {
     asrPipeline = pipelineInstance;
     loadedModelId = modelId;
     modelStatus.textContent = `Active model: ${modelProfile.label}. Cached in this browser.`;
-    if (USE_CTC_HIGHLIGHT_ALIGNMENT && (!highlightProcessor || !highlightModel)) {
-      const loadHighlightModel = confirmModelLazyLoad(HIGHLIGHT_MODEL_ID);
+    if (useCtcHighlightAlignment && (!highlightProcessor || !highlightModel)) {
+      const loadHighlightModel = await confirmModelLazyLoad(HIGHLIGHT_MODEL_ID);
       if (loadHighlightModel) {
         statusEl.textContent = 'Loading the cached CTC highlight model...';
         try {
           await preloadHighlightModel(device);
         } catch (alignmentModelError) {
           console.warn('CTC highlight model unavailable; continuing with Whisper timings:', alignmentModelError);
-          modelStatus.textContent = 'CTC highlight model unavailable; Whisper timings will be used.';
+          modelStatus.textContent = 'CTC highlight model unavailable; M-Vox timings will be used.';
         }
       }
     }
@@ -1965,7 +2542,7 @@ transcribeBtn.addEventListener('click', async () => {
     currentTranscript = formattedText;
     let highlightTimings = recognizedWordTimings;
     let ctcAlignmentApplied = false;
-    if (USE_CTC_HIGHLIGHT_ALIGNMENT && rawAudio && formattedText && highlightProcessor && highlightModel) {
+    if (useCtcHighlightAlignment && rawAudio && formattedText && highlightProcessor && highlightModel) {
       try {
         statusEl.textContent = 'Aligning transcript words for playback highlighting...';
         const alignedTimings = await alignTranscriptWords(rawAudio, formattedText, device);
@@ -1981,8 +2558,7 @@ transcribeBtn.addEventListener('click', async () => {
     }
     enableDownload(formattedText);
     if (currentFile) {
-      audioPlayer.src = URL.createObjectURL(currentFile);
-      audioPlayer.classList.remove('hidden');
+      updateMediaControls();
     }
     const decodedDurationSeconds = Number.isFinite(result?.decodedDurationSeconds)
       ? result.decodedDurationSeconds
@@ -1999,7 +2575,7 @@ transcribeBtn.addEventListener('click', async () => {
     lastAudioDuration = Number.isFinite(audioPlayer.duration) ? audioPlayer.duration : null;
     const timingStatus = ctcAlignmentApplied
       ? 'CTC word alignment applied.'
-      : 'Whisper word timings used as fallback.';
+      : 'M-Vox word timings used as fallback.';
     statusEl.textContent = `Transcription complete, ${transcriptionModeLabel}. ${timingStatus}`;
     showProgress('Complete', 'Done', 100);
   } catch (error) {
@@ -2007,11 +2583,14 @@ transcribeBtn.addEventListener('click', async () => {
     statusEl.textContent = 'Error: ' + (error?.message ?? error?.toString() ?? 'Unknown error');
     transcriptEl.textContent = '';
     showProgress('Error', 'Failed to transcribe', 100);
-    showErrorModal(error);
+    showErrorModal(error, true);
   } finally {
+    transcriptLoading.hidden = true;
     clearInterval(elapsedTimerInterval);
     elapsedTimerInterval = null;
-    lastTranscriptionElapsed = performance.now() - transcriptionStartTime;
+    lastTranscriptionElapsed = transcriptionStartTime != null
+      ? performance.now() - transcriptionStartTime
+      : null;
     transcriptionStartTime = null;
     updateDebugInfo();
     transcribeBtn.disabled = !currentFile;
@@ -2020,4 +2599,6 @@ transcribeBtn.addEventListener('click', async () => {
 });
 
 
+updateMediaControls();
 statusEl.textContent = 'Choose an audio file to begin transcription.';
+updateDebugInfo();

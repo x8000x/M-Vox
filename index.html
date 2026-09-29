@@ -4,8 +4,11 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="theme-color" content="#0f172a" />
-  <title>Audio Transcription</title>
+    <title>M-Vox Audio Transcriber</title>
   <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Exo+2:wght@600;700;800&display=swap" rel="stylesheet" />
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" />
   <link rel="stylesheet" href="styles.css" />
@@ -16,123 +19,146 @@
 
 <body class="min-h-screen text-slate-100">
   
-    <div class="mx-auto flex min-h-screen w-full max-w-5xl flex-col items-center justify-center px-3 py-4 sm:px-6 sm:py-8 lg:px-8 lg:py-10">
+    <div class="app-frame mx-auto flex min-h-screen w-full max-w-7xl flex-col items-center justify-center px-3 py-4 sm:px-6 sm:py-8 lg:px-8 lg:py-10">
     
         <div class="relative w-full rounded-3xl border border-slate-800 bg-slate-900/90 p-4 shadow-2xl shadow-slate-950/30 backdrop-blur sm:p-6 lg:p-8">
-            <button id="infoToggle" type="button" aria-label="Information" aria-haspopup="dialog" aria-controls="infoModal" title="Information" class="absolute right-4 top-4 inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-700 bg-slate-900/80 text-slate-300 transition hover:border-sky-400 hover:text-sky-300 focus:outline-none focus:ring-2 focus:ring-sky-400 sm:right-6 sm:top-6">
+                        <div class="header-actions absolute right-4 top-4 flex items-center gap-2 sm:right-6 sm:top-6">
+                              <button id="customizeToggle" type="button" aria-label="Settings" aria-haspopup="dialog" aria-controls="customizeModal" aria-expanded="false" title="Settings" class="inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-700 bg-slate-900/80 transition hover:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-400">
+                                <i class="fa-solid fa-sliders" aria-hidden="true"></i>
+                            </button>
+                              <button id="infoToggle" type="button" aria-label="Information" aria-haspopup="dialog" aria-controls="infoModal" title="Information" class="inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-700 bg-slate-900/80 transition hover:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-400">
                 <i class="fa-solid fa-circle-info" aria-hidden="true"></i>
-            </button>
+                            </button>
+                        </div>
             
-            <div class="mb-6 space-y-4 text-center sm:mb-8">
-                <p class="inline-flex items-center rounded-full bg-slate-800 px-4 py-2 text-[0.7rem] uppercase tracking-[0.3em] text-sky-300/90 sm:text-xs">Audio Transcriber</p>
-                <h1 class="text-2xl font-semibold sm:text-3xl lg:text-4xl"><i class="fa-xs fa-solid fa-microphone"></i> Audio <i class="fa-solid fa-arrow-right-long"></i> <i class="fa-xs fa-regular fa-file-lines"></i>  Text</h1>
-                <p class="mx-auto max-w-2xl text-sm text-slate-400 sm:text-base lg:text-lg">Upload an audio file and transcribe it to text directly in your local browser. </p>
+            <div class="app-heading">
+                <h1 class="app-brand text-2xl font-semibold sm:text-3xl"><img src="icons/M-vox_logo.jpg" alt="" class="app-brand-logo" /><span>M-Vox</span></h1>
+                <p class="text-sm text-slate-400">Transcribe audio locally in your browser.</p>
             </div>
 
-            <div class="mt-2 flex justify-center sm:justify-end">
-                <button id="customizeToggle" type="button" class="inline-flex w-full items-center justify-center gap-2 rounded-full border border-slate-700 bg-slate-900/80 px-4 py-2 text-sm font-medium text-slate-200 transition hover:border-slate-500 hover:text-slate-100 sm:w-auto">
-                    <i class="fa-solid fa-sliders"></i>
-                    Customize
-                </button>
-            </div>
-
-            <div id="customizePanel" class="mt-4 hidden rounded-3xl border border-slate-800 bg-slate-950/80 p-4 shadow-inner shadow-slate-950/20 sm:p-5">
-                <div class="flex flex-wrap items-start justify-between gap-3">
-                    <div>
-                        <h3 class="text-sm font-semibold text-slate-100">Personalize your experience</h3>
-                        <p class="mt-1 text-sm text-slate-400">Choose a theme, adjust the font size, and switch the font family.</p>
-                    </div>
-                </div>
-
-                <div class="mt-4 grid gap-4 md:grid-cols-3">
-                    <div class="md:col-span-3 rounded-2xl border border-sky-400/20 bg-sky-400/5 p-4">
-                        <div class="flex flex-wrap items-start justify-between gap-3">
-                            <div>
-                                <p class="text-sm font-medium text-slate-200">Whisper accuracy</p>
-                                <p class="mt-1 text-xs leading-5 text-slate-400">Models download to this browser and stay cached for later runs. Higher accuracy uses more memory and takes longer.</p>
+            <div class="workspace-layout">
+                            <aside class="left-column" aria-label="Audio upload controls">
+                        <dialog id="customizeModal" class="settings-modal" aria-labelledby="customizeTitle">
+                            <div class="settings-modal-header">
+                                <h2 id="customizeTitle" class="text-lg font-semibold text-slate-100">Settings</h2>
+                                <button id="closeCustomizeModal" type="button" aria-label="Close settings" title="Close settings" class="inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-700 bg-slate-900/80 text-slate-300 transition hover:border-sky-400 hover:text-sky-300 focus:outline-none focus:ring-2 focus:ring-sky-400">
+                                    <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+                                </button>
                             </div>
-                            <select id="modelSelect" class="w-full rounded-2xl border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 outline-none sm:w-auto">
-                                <option value="default">Default · Whisper Base</option>
-                                <option value="medium">Medium · Whisper Small</option>
-                                <option value="highLite">High-lite · Whisper Large V3 Turbo</option>
-                                <option value="high">High · Whisper Large V3</option>
+                            <div id="customizePanel" class="settings-modal-content">
+                                <div class="settings-options grid gap-4 md:grid-cols-3">
+                    <div class="md:col-span-3 rounded-2xl border border-sky-400/20 bg-sky-400/5 p-4">
+                        <div class="flex flex-col items-stretch gap-3">
+                            <div>
+                                <p class="text-sm font-medium text-slate-200">M-Vox mode</p>
+                                <p class="mt-1 text-xs leading-5 text-slate-400">Selected models download to this browser and stay cached for later runs. Higher modes use more memory and take longer.</p>
+                            </div>
+                            <select id="modelSelect" aria-label="M-Vox mode" class="w-full rounded-2xl border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 outline-none">
+                                <option value="default" data-model-label="Fast · M-Vox">Fast · M-Vox · Estimated 265 MB</option>
+                                <option value="medium" data-model-label="Balance · M-Vox">Balance · M-Vox · Estimated 604 MB</option>
+                                <option value="highLite" data-model-label="High · M-Vox">High · M-Vox · Estimated 1.52 GB</option>
+                                <option value="high" data-model-label="Max · M-Vox">Max · M-Vox · Estimated 2.45 GB</option>
                             </select>
                         </div>
-                        <p id="modelStatus" class="mt-3 text-xs text-slate-500">Default model: Whisper Base</p>
+                        <p id="modelStatus" class="mt-3 text-xs text-slate-500">Selected mode: Fast · M-Vox</p>
                     </div>
 
                     <div class="md:col-span-3 rounded-2xl border border-sky-400/20 bg-sky-400/5 p-4">
                         <label for="languageSelect" class="block text-sm font-medium text-slate-200">Audio language</label>
-                        <p class="mt-1 text-xs leading-5 text-slate-400">Choose the spoken language to improve recognition. Auto Detect lets Whisper identify it.</p>
-                        <select id="languageSelect" class="mt-3 w-full rounded-2xl border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 outline-none sm:w-auto">
+                        <p class="mt-1 text-xs leading-5 text-slate-400">Choose the spoken language to improve recognition. Auto Detect lets the selected model identify it.</p>
+                        <select id="languageSelect" aria-label="Audio language" class="mt-3 w-full rounded-2xl border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 outline-none">
                             <option value="auto">Auto Detect</option>
                         </select>
                         <p id="languageStatus" class="mt-3 text-xs text-slate-500">Language: Auto Detect.</p>
                         <label for="autoTranslateToggle" class="mt-4 flex cursor-pointer items-start gap-3 rounded-2xl border border-slate-700/80 bg-slate-900/50 p-3">
-                            <input id="autoTranslateToggle" type="checkbox" class="mt-1 h-4 w-4 accent-sky-400" checked />
+                            <input id="autoTranslateToggle" type="checkbox" class="mt-1 h-4 w-4" checked />
                             <span>
                                 <span class="block text-sm font-medium text-slate-200">Translate to English</span>
                                 <span class="mt-1 block text-xs leading-5 text-slate-400">On by default. Turn this off to keep the transcription in the spoken language.</span>
                             </span>
                         </label>
+                        <label for="showTimestampsToggle" class="mt-3 flex cursor-pointer items-start gap-3 rounded-2xl border border-slate-700/80 bg-slate-900/50 p-3">
+                            <input id="showTimestampsToggle" type="checkbox" class="mt-1 h-4 w-4" checked />
+                            <span>
+                                <span class="block text-sm font-medium text-slate-200">Show timestamps</span>
+                                <span class="mt-1 block text-xs leading-5 text-slate-400">Display or hide timestamps in the transcript.</span>
+                            </span>
+                        </label>
+                        <label for="ctcHighlightToggle" class="mt-3 flex cursor-pointer items-start gap-3 rounded-2xl border border-slate-700/80 bg-slate-900/50 p-3">
+                            <input id="ctcHighlightToggle" type="checkbox" class="mt-1 h-4 w-4" />
+                            <span>
+                                <span class="block text-sm font-medium text-slate-200">More accurate word highlighting</span>
+                                <span class="mt-1 block text-xs leading-5 text-slate-400">Use CTC alignment for more accurate highlighting. This slows transcription and downloads an additional model (about 340 MB). Off uses M-Vox timing.</span>
+                            </span>
+                        </label>
                     </div>
 
-                    <div>
-                        <p class="text-sm font-medium text-slate-300">Theme</p>
-                        <div class="mt-2 grid grid-cols-5 gap-2">
-                            <button type="button" class="theme-option flex items-center justify-center rounded-full border border-slate-700 p-0 transition" data-theme="blue" aria-label="Blue theme">
-                                <span class="m-1 h-8 w-8 rounded-full border-2 border-white/90" style="background-color: #38bdf8;"></span>
-                            </button>
-                            <button type="button" class="theme-option flex items-center justify-center rounded-full border border-slate-700 p-0 transition" data-theme="pink" aria-label="Pink theme">
-                                <span class="m-1 h-8 w-8 rounded-full border-2 border-white/90" style="background-color: #c55a8e;"></span>
-                            </button>
-                            <button type="button" class="theme-option flex items-center justify-center rounded-full border border-slate-700 p-0 transition" data-theme="yellow" aria-label="Yellow theme">
-                                <span class="m-1 h-8 w-8 rounded-full border-2 border-white/90" style="background-color: #fbbf24;"></span>
-                            </button>
-                            <button type="button" class="theme-option flex items-center justify-center rounded-full border border-slate-700 p-0 transition" data-theme="green" aria-label="Green theme">
-                                <span class="m-1 h-8 w-8 rounded-full border-2 border-white/90" style="background-color: #4ade80;"></span>
-                            </button>
-                            <button type="button" class="theme-option flex items-center justify-center rounded-full border border-slate-700 p-0 transition" data-theme="black" aria-label="Black theme">
-                                <span class="m-1 h-8 w-8 rounded-full border-2 border-white/90" style="background-color: #111827;"></span>
-                            </button>
+                    <div class="md:col-span-3 rounded-2xl border border-sky-400/20 bg-sky-400/5 p-4">
+                        <h3 class="text-sm font-medium text-slate-200">Personalize your experience</h3>
+                        <p class="mt-1 text-xs leading-5 text-slate-400">Choose a theme, adjust the font size, and switch the font family.</p>
+                        <div class="mt-4 grid gap-4 sm:grid-cols-3">
+                            <div>
+                                <p class="text-sm font-medium text-slate-300">Theme</p>
+                                <div class="mt-2 grid grid-cols-5 gap-2">
+                                    <button type="button" class="theme-option flex items-center justify-center rounded-full border border-slate-700 p-0 transition" data-theme="blue" aria-label="Blue theme">
+                                        <span class="m-1 h-8 w-8 rounded-full border-2 border-white/90" style="background-color: #38bdf8;"></span>
+                                    </button>
+                                    <button type="button" class="theme-option flex items-center justify-center rounded-full border border-slate-700 p-0 transition" data-theme="pink" aria-label="Pink theme">
+                                        <span class="m-1 h-8 w-8 rounded-full border-2 border-white/90" style="background-color: #c55a8e;"></span>
+                                    </button>
+                                    <button type="button" class="theme-option flex items-center justify-center rounded-full border border-slate-700 p-0 transition" data-theme="yellow" aria-label="Yellow theme">
+                                        <span class="m-1 h-8 w-8 rounded-full border-2 border-white/90" style="background-color: #fbbf24;"></span>
+                                    </button>
+                                    <button type="button" class="theme-option flex items-center justify-center rounded-full border border-slate-700 p-0 transition" data-theme="green" aria-label="Green theme">
+                                        <span class="m-1 h-8 w-8 rounded-full border-2 border-white/90" style="background-color: #4ade80;"></span>
+                                    </button>
+                                    <button type="button" class="theme-option flex items-center justify-center rounded-full border border-slate-700 p-0 transition" data-theme="black" aria-label="Black theme">
+                                        <span class="m-1 h-8 w-8 rounded-full border-2 border-white/90" style="background-color: #111827;"></span>
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div>
+                                <p class="text-sm font-medium text-slate-300">Font size</p>
+                                <div class="mt-2 flex flex-wrap gap-2">
+                                    <button type="button" class="font-size-option rounded-full border border-slate-700 px-3 py-2 text-sm text-slate-200 transition" data-size="small">Small</button>
+                                    <button type="button" class="font-size-option rounded-full border border-slate-700 px-3 py-2 text-sm text-slate-200 transition" data-size="medium">Medium</button>
+                                    <button type="button" class="font-size-option rounded-full border border-slate-700 px-3 py-2 text-sm text-slate-200 transition" data-size="large">Large</button>
+                                </div>
+                            </div>
+
+                            <div>
+                                <label for="fontFamilySelect" class="text-sm font-medium text-slate-300">Font family</label>
+                                <select id="fontFamilySelect" aria-label="Font family" class="mt-2 w-full rounded-2xl border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 outline-none">
+                                    <option value="Inter">Inter</option>
+                                    <option value="Poppins">Poppins</option>
+                                    <option value="Roboto">Roboto</option>
+                                    <option value="Georgia">Georgia</option>
+                                    <option value="Segoe UI">Segoe UI</option>
+                                </select>
+                            </div>
                         </div>
                     </div>
+                                </div>
+                            </div>
+                        </dialog>
 
-                    <div>
-                        <p class="text-sm font-medium text-slate-300">Font size</p>
-                        <div class="mt-2 flex flex-wrap gap-2">
-                            <button type="button" class="font-size-option rounded-full border border-slate-700 px-3 py-2 text-sm text-slate-200 transition" data-size="small">Small</button>
-                            <button type="button" class="font-size-option rounded-full border border-slate-700 px-3 py-2 text-sm text-slate-200 transition" data-size="medium">Medium</button>
-                            <button type="button" class="font-size-option rounded-full border border-slate-700 px-3 py-2 text-sm text-slate-200 transition" data-size="large">Large</button>
-                        </div>
-                    </div>
-
-                    <div>
-                        <p class="text-sm font-medium text-slate-300">Font family</p>
-                        <select id="fontFamilySelect" class="mt-2 w-full rounded-2xl border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 outline-none">
-                            <option value="Inter">Inter</option>
-                            <option value="Poppins">Poppins</option>
-                            <option value="Roboto">Roboto</option>
-                            <option value="Georgia">Georgia</option>
-                            <option value="Segoe UI">Segoe UI</option>
-                        </select>
-                    </div>
-                </div>
-            </div>
-
-            <div class="mt-6 flex flex-col gap-4 sm:grid sm:grid-cols-[1fr_auto] sm:items-start">
-                <label class="flex w-full max-w-2xl flex-col gap-3 rounded-3xl border border-slate-800 bg-slate-950/80 p-4 shadow-inner shadow-slate-950/20 sm:p-5">
-                    <span class="text-sm font-medium text-slate-300"><i class="fa-lg fa-solid fa-file-arrow-down"></i> Upload an audio file</span>
-                    <input id="audioInput" type="file" accept="audio/*" class="w-full text-sm text-slate-200 file:mr-3 file:rounded-full file:border-0 file:bg-slate-800 file:px-4 file:py-2 file:text-slate-100 file:shadow-sm file:shadow-slate-950/10" />
-                    <p class="text-xs leading-5 text-slate-500">Supports audio file formats such as WAV, MP3, OGG, M4A and more.</p>
+            <section class="upload-panel rounded-3xl border border-slate-800 bg-slate-950/80 p-4 shadow-inner shadow-slate-950/20 sm:p-5">
+                <span class="upload-title text-sm font-medium text-slate-300"><i class="fa-lg fa-solid fa-file-arrow-down"></i> Upload an audio file</span>
+                <p class="mt-1 text-xs leading-5 text-slate-500">Supports audio file formats such as WAV, MP3, OGG, M4A and more.</p>
+                <label id="audioDropZone" class="audio-drop-zone mt-3 flex w-full flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-slate-700 p-5 text-center transition">
+                    <span class="text-sm font-medium text-slate-200">Drag and drop your audio file here</span>
+                    <span class="text-xs text-slate-500">or</span>
+                    <span class="choose-file-button">Choose File</span>
+                    <span id="selectedFileName" class="selected-file-name text-xs text-slate-400">No file chosen</span>
+                    <input id="audioInput" class="audio-file-input" type="file" accept="audio/*" />
                 </label>
 
-                <button id="transcribeBtn" class="flex min-h-[3rem] w-full items-center justify-center rounded-3xl bg-sky-500 px-5 text-sm font-medium text-slate-950 transition hover:bg-sky-400 disabled:cursor-not-allowed disabled:bg-slate-700 sm:w-auto sm:self-center sm:md:h-16" disabled>Transcribe</button>
-            </div>
+                <button id="transcribeBtn" class="mt-4 flex min-h-[3rem] w-full items-center justify-center rounded-3xl bg-sky-500 px-5 text-sm font-medium text-slate-950 transition hover:bg-sky-400 disabled:cursor-not-allowed disabled:bg-slate-700" disabled>Transcribe</button>
+            </section>
 
-        <div id="status" class="mt-6 rounded-3xl border border-slate-800 bg-slate-950/80 p-3 text-sm text-slate-300 sm:p-4"></div>
-        <div id="debugInfo" class="mt-2 rounded-3xl border border-slate-800 bg-slate-950/80 p-3 text-xs text-slate-400"></div>
-        <details id="modelDownloadDebug" class="mt-2 rounded-3xl border border-slate-800 bg-slate-950/80 p-3 text-xs text-slate-400">
+        <div id="status" class="rounded-3xl border border-slate-800 bg-slate-950/80 p-3 text-sm text-slate-300 sm:p-4"></div>
+        <details id="modelDownloadDebug" class="rounded-3xl border border-slate-800 bg-slate-950/80 p-3 text-xs text-slate-400">
             <summary class="cursor-pointer select-none font-medium text-slate-300">Model download details</summary>
             <div class="mt-3 grid gap-2 sm:grid-cols-3">
                 <div><span class="text-slate-500">Model</span><p id="modelDownloadName" class="mt-1 text-slate-200">Not started</p></div>
@@ -144,20 +170,23 @@
             </div>
             <p id="modelDownloadState" class="mt-2 text-slate-500">Waiting for a model download.</p>
         </details>
+                            </aside>
+
+                            <main class="right-column" aria-label="Transcription workspace">
+                <div class="transcription-status">
+                    <div id="debugInfo" class="text-xs text-slate-400"></div>
         <div id="progressContainer" class="mt-4 hidden rounded-3xl bg-slate-950/80 p-3 sm:p-4">
-            <div class="flex items-center justify-between gap-4 text-sm text-slate-200">
-                <div class="inline-flex items-center gap-3">
-                    <span id="progressDot" class="inline-block h-2.5 w-2.5 rounded-full bg-sky-400 animate-pulse"></span>
-                    <span id="progressLabel">Waiting to start...</span>
-                </div>
+            <div class="progress-status-row flex items-center justify-between gap-4 text-sm text-slate-200">
+                <span id="progressLabel">Waiting to start...</span>
                 <span id="progressState" class="text-slate-500">Preparing</span>
             </div>
             <div class="mt-4 h-2 overflow-hidden rounded-full bg-slate-800">
                 <div id="progressBar" class="h-full w-0 bg-sky-500 transition-all duration-500"></div>
             </div>
         </div>
+        </div>
 
-        <div class="mt-6 rounded-3xl border border-slate-800 bg-slate-950/80 p-4 sm:p-6">
+        <div class="transcript-panel rounded-3xl border border-slate-800 bg-slate-950/80 p-4 sm:p-6">
 
             <div class="mb-4 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
 
@@ -179,48 +208,128 @@
                 </div>
             </div>
         
-            <audio id="audioPlayer" controls class="mt-4 hidden w-full rounded-3xl bg-slate-900/90 p-2 text-slate-100 sm:p-3"></audio>
-            <pre id="transcript" class="min-h-[180px] whitespace-pre-wrap break-words rounded-3xl bg-slate-950/90 p-3 text-sm leading-6 text-slate-100 sm:p-4"></pre>
+                        <div class="transcript-display">
+                            <pre id="transcript" class="min-h-[180px] whitespace-pre-wrap break-words rounded-3xl bg-slate-950/90 p-3 text-sm leading-6 text-slate-100 sm:p-4"></pre>
+                            <div id="transcriptLoading" class="transcript-loading" role="status" aria-live="polite" hidden>
+                                <div class="loader dots-bounce" aria-hidden="true"><span></span><span></span><span></span></div>
+                                <span class="sr-only">Transcribing audio</span>
+                            </div>
+                        </div>
         </div>
+                <section class="media-panel rounded-3xl border border-slate-800 bg-slate-950/80 p-4" aria-label="Media player">
+                    <div class="media-controls">
+                        <button id="rewindBtn" type="button" class="media-skip" aria-label="Back 10 seconds" title="Back 10 seconds" disabled><i class="fa-solid fa-rotate-left" aria-hidden="true"></i><span>10</span></button>
+                        <div id="customPlayerControls" class="custom-player-controls">
+                            <button id="playPauseBtn" type="button" class="media-play" aria-label="Play audio" title="Play audio" disabled>
+                                <i id="playPauseIcon" class="fa-solid fa-play" aria-hidden="true"></i>
+                            </button>
+                            <button id="forwardBtn" type="button" class="media-skip" aria-label="Forward 10 seconds" title="Forward 10 seconds" disabled><i class="fa-solid fa-rotate-right" aria-hidden="true"></i><span>10</span></button>
+                            <div class="media-timeline">
+                                <span id="playbackCurrentTime" class="media-time">00:00</span>
+                                <input id="seekSlider" class="media-range" type="range" min="0" max="1" step="0.01" value="0" aria-label="Seek audio playback" disabled />
+                                <span id="playbackDuration" class="media-time">00:00</span>
+                            </div>
+                            <div class="media-options">
+                                <div class="media-speed-control">
+                                    <button id="playbackRateToggle" type="button" class="media-rate" aria-label="Playback speed" aria-haspopup="listbox" aria-expanded="false" aria-controls="playbackRateMenu" title="Playback speed">
+                                        <span id="playbackRateValue">1x</span>
+                                        <i class="fa-solid fa-chevron-down" aria-hidden="true"></i>
+                                    </button>
+                                    <div id="playbackRateMenu" class="media-rate-menu" role="listbox" aria-label="Playback speed" hidden>
+                                        <button type="button" class="media-rate-option" role="option" aria-selected="false" tabindex="-1" data-rate="0.5">0.5x</button>
+                                        <button type="button" class="media-rate-option" role="option" aria-selected="false" tabindex="-1" data-rate="0.75">0.75x</button>
+                                        <button type="button" class="media-rate-option is-selected" role="option" aria-selected="true" tabindex="-1" data-rate="1">1x</button>
+                                        <button type="button" class="media-rate-option" role="option" aria-selected="false" tabindex="-1" data-rate="1.25">1.25x</button>
+                                        <button type="button" class="media-rate-option" role="option" aria-selected="false" tabindex="-1" data-rate="1.5">1.5x</button>
+                                        <button type="button" class="media-rate-option" role="option" aria-selected="false" tabindex="-1" data-rate="2">2x</button>
+                                    </div>
+                                </div>
+                                <button id="volumeToggle" type="button" class="media-volume-toggle" aria-label="Mute audio" aria-pressed="false" title="Mute audio">
+                                    <i id="volumeIcon" class="fa-solid fa-volume-high" aria-hidden="true"></i>
+                                </button>
+                                <input id="volumeSlider" class="media-range media-volume" type="range" min="0" max="1" step="0.01" value="1" aria-label="Volume" />
+                            </div>
+                        </div>
+                        <audio id="audioPlayer" class="media-audio-engine hidden" aria-hidden="true"></audio>
+                    </div>
+                </section>
+                            </main>
+                        </div>
     </div>
 
     <div class="mt-6 w-full max-w-3xl rounded-3xl border border-slate-800 bg-slate-900/90 px-4 py-4 text-sm text-slate-400 shadow-xl shadow-slate-950/20 sm:mt-8 sm:px-6 sm:py-5 sm:text-base">
       <p class="text-slate-300">No server required. Models and computation run in the browser.</p>
-        <p class="mt-3">If the model is not loaded yet, the first transcription may take a minute while the selected Whisper model downloads and initializes.</p>
+        <p class="mt-3">If the model is not loaded yet, the first transcription may take a minute while the selected model downloads and initializes.</p>
     </div>
   </div>
 
     <div id="infoModal" class="fixed inset-0 z-40 hidden items-center justify-center bg-slate-950/80 px-3 py-4 sm:px-4 sm:py-6" role="dialog" aria-modal="true" aria-labelledby="infoTitle">
-        <div class="w-full max-w-lg rounded-3xl border border-slate-800 bg-slate-900 p-4 shadow-2xl shadow-slate-950/50 sm:p-6">
+        <div class="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-3xl border border-slate-800 bg-slate-900 p-4 shadow-2xl shadow-slate-950/50 sm:p-6">
             <div class="flex items-start justify-between gap-4">
-                <h2 id="infoTitle" class="text-xl font-semibold text-slate-100">About this transcription</h2>
+                <h2 id="infoTitle" class="text-xl font-semibold text-slate-100">About This Transcriber</h2>
                 <button id="closeInfoModal" type="button" aria-label="Close information" class="rounded-full border border-slate-700 bg-slate-800 px-3 py-2 text-slate-200 transition hover:border-sky-400 hover:text-white focus:outline-none focus:ring-2 focus:ring-sky-400"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
             </div>
-            <div class="mt-4 space-y-3 text-sm leading-6 text-slate-300">
-                <p>Transcription runs in this browser. The elapsed timer updates while a transcription is active and includes model loading and audio preparation.</p>
-                <p>Model sizes shown before loading are estimates. Actual downloaded bytes vary by model files and are tracked in Model download details; totals switch to MB and GB at 1,000 MB.</p>
-                <p>Downloaded model files are cached by the browser and may be reused on later visits.</p>
+            <div class="mt-4 space-y-4 text-sm leading-6 text-slate-300">
+                <p>This transcriber was made to help students, researchers, and interviewers convert their audio files into text without needing a subscription, and without limits on audio file size or duration.</p>
+                <p><strong class="font-semibold text-slate-100">Disclaimer:</strong> Because this transcriber uses open-source models and APIs, its accuracy and speed are not guaranteed to be 100%.</p>
+
+                <section aria-labelledby="privacyTitle">
+                    <h3 id="privacyTitle" class="font-semibold text-slate-100">Privacy and Performance</h3>
+                    <p class="mt-1">The transcriber runs on your device, using your browser's WebGPU or your device's own hardware. Since transcription happens on your end, your audio files are processed and stored only on your device and are never sent anywhere else.</p>
+                    <p class="mt-2">Transcription may affect your device's performance while it runs, and its speed depends on your device's capability.</p>
+                </section>
+
+                <section aria-labelledby="modesTitle">
+                    <h3 id="modesTitle" class="font-semibold text-slate-100">Modes</h3>
+                    <p class="mt-1">There are four modes in this transcriber:</p>
+                    <ul class="mt-2 list-disc space-y-1 pl-5">
+                        <li><strong class="font-semibold text-slate-100">Fast (265 MB):</strong> The quickest mode for clear audio.</li>
+                        <li><strong class="font-semibold text-slate-100">Balance (604 MB):</strong> A balance of speed and recognition quality.</li>
+                        <li><strong class="font-semibold text-slate-100">High (1.52 GB):</strong> More recognition detail for challenging audio.</li>
+                        <li><strong class="font-semibold text-slate-100">Max (2.45 GB):</strong> The largest mode for the highest recognition quality; it uses the most memory and takes the longest.</li>
+                    </ul>
+                </section>
+
+                <section aria-labelledby="settingsInfoTitle">
+                    <h3 id="settingsInfoTitle" class="font-semibold text-slate-100">Settings</h3>
+                    <p class="mt-1">In the settings, you can:</p>
+                    <ul class="mt-2 list-disc space-y-1 pl-5">
+                        <li><strong class="font-semibold text-slate-100">Select an M-Vox mode.</strong></li>
+                        <li><strong class="font-semibold text-slate-100">Choose the language you are transcribing.</strong> It is set to auto-detect by default, but for better accuracy you can set it to the language of your audio.</li>
+                        <li><strong class="font-semibold text-slate-100">Toggle auto-translate to English on or off.</strong> It is on by default.</li>
+                        <li><strong class="font-semibold text-slate-100">Toggle timestamps on or off</strong> for more accurate checking.</li>
+                        <li><strong class="font-semibold text-slate-100">Personalize the display.</strong> Under Personalization, you can pick from preset themes, change the font, and adjust the font size.</li>
+                    </ul>
+                </section>
+
+                <section aria-labelledby="tipsTitle">
+                    <h3 id="tipsTitle" class="font-semibold text-slate-100">Tips</h3>
+                    <p class="mt-1">Since the transcriber is not 100% accurate, you can listen to the media player in the transcription display and follow the highlighted text. <em>(Disclaimer: the highlight feature is sometimes out of sync with the media player.)</em> You can then manually correct the transcript after downloading it.</p>
+                </section>
             </div>
         </div>
     </div>
 
-    <div id="errorModal" class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-950/80 px-3 py-4 sm:px-4 sm:py-6">
-    <div class="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-3xl border border-slate-800 bg-slate-900 p-4 shadow-2xl shadow-slate-950/50 sm:p-6">
-      <div class="flex items-start justify-between gap-4">
-        <div>
-          <h2 class="text-xl font-semibold text-slate-100">Transcription Error</h2>
-          <p class="mt-2 text-sm text-slate-400">An issue occurred while preparing or transcribing your audio.</p>
-        </div>
-        <button id="closeErrorModal" class="rounded-full border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-200 hover:bg-slate-700">Close</button>
-      </div>
-      <div class="mt-5 rounded-2xl bg-slate-950/90 p-4 text-sm text-slate-200">
-        <pre id="errorMessage" class="whitespace-pre-wrap break-words text-sm leading-6"></pre>
-      </div>
-      <div class="mt-5 flex justify-end gap-3">
-        <button id="retryErrorBtn" class="rounded-3xl bg-sky-500 px-4 py-2 text-sm font-medium text-slate-950 transition hover:bg-sky-400">Retry</button>
-      </div>
-    </div>
-  </div>
+        <dialog id="appDialog" class="app-dialog" aria-labelledby="appDialogTitle" aria-describedby="appDialogMessage">
+            <div class="app-dialog-header">
+                <div class="app-dialog-heading">
+                    <span id="appDialogIcon" class="app-dialog-icon fa-solid fa-circle-info" aria-hidden="true"></span>
+                    <h2 id="appDialogTitle">Notice</h2>
+                </div>
+                <button id="appDialogClose" type="button" aria-label="Close dialog" title="Close" class="app-dialog-close">
+                    <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+                </button>
+            </div>
+            <p id="appDialogMessage" class="app-dialog-message"></p>
+            <details id="appDialogDetails" class="app-dialog-details" hidden>
+                <summary>Technical details</summary>
+                <pre id="appDialogDetailsText"></pre>
+            </details>
+            <div class="app-dialog-actions">
+                <button id="appDialogCancel" type="button" class="app-dialog-secondary" hidden>Cancel</button>
+                <button id="appDialogConfirm" type="button" class="app-dialog-primary">Got it</button>
+            </div>
+        </dialog>
 
   <script type="module" src="script.js"></script>
   <script>
